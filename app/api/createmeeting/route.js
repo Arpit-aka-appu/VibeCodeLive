@@ -66,6 +66,8 @@ export async function POST(req) {
         meetingId: meeting._id.toString(),
         meetingUrl: meeting.url,
         username: adminUser.name,
+        adminName: adminUser.name,
+        meetingName: meeting.name,
         isHost: true,
         role: "teacher",
       },

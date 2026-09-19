@@ -37,7 +37,7 @@ export async function POST(req) {
 
     const storedToken = await RefreshToken.findOne({
       tokenHash,
-      // expiresAt: { $gt: new Date() },
+      expiresAt: { $gt: new Date() },
     });
 
     if (!storedToken) {

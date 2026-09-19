@@ -20,7 +20,9 @@ export async function POST(req) {
     //   );
     // }
 
+    const tStart = performance.now();
     await connectDB();
+    const tDbConnect = performance.now();
 
     const { email, password } = await req.json();
 
@@ -32,11 +34,13 @@ export async function POST(req) {
         success: false,
       });
     }
+    const tValidation = performance.now();
 
     // Check if user exists
     const user = await User.findOne({ email: email.trim() }).select(
       "+password",
     );
+    const tLookup = performance.now();
 
     if (!user) {
       return NextResponse.json({
@@ -48,6 +52,7 @@ export async function POST(req) {
 
     // Compare password
     const isMatch = await bcrypt.compare(password, user.password);
+    const tBcrypt = performance.now();
 
     if (!isMatch) {
       return NextResponse.json({
@@ -61,6 +66,7 @@ export async function POST(req) {
     // generate token
     const accessToken = generateAccessToken(user);
     const refreshToken = generateRefreshToken(user);
+    const tTokens = performance.now();
 
     // save token in db
     await RefreshToken.create({
@@ -68,6 +74,19 @@ export async function POST(req) {
       tokenHash: hashToken(refreshToken),
       expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
     });
+    const tSaveRefresh = performance.now();
+
+    if (process.env.DEBUG_LOGIN_TIMING === "true") {
+      console.log(
+        `[LOGIN TIMING] total: ${(tSaveRefresh - tStart).toFixed(1)}ms | ` +
+        `dbConn: ${(tDbConnect - tStart).toFixed(1)}ms | ` +
+        `validation: ${(tValidation - tDbConnect).toFixed(1)}ms | ` +
+        `lookup: ${(tLookup - tValidation).toFixed(1)}ms | ` +
+        `bcrypt: ${(tBcrypt - tLookup).toFixed(1)}ms | ` +
+        `tokens: ${(tTokens - tBcrypt).toFixed(1)}ms | ` +
+        `saveRefreshToken: ${(tSaveRefresh - tTokens).toFixed(1)}ms`
+      );
+    }
 
     // make response
     const response = NextResponse.json({

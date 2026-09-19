@@ -8,11 +8,46 @@ import {
   updateSnapshot,
   receiveStudentCodeSuccess,
   receiveStudentCodeError,
+  setAdminName,
+  setMeetingInfo,
 } from "@/store/meetingSlice";
+
+export function parseTokenPayload(token: string) {
+  try {
+    const base64Url = token.split(".")[1];
+    if (!base64Url) return null;
+    const base64 = base64Url.replace(/-/g, "+").replace(/_/g, "/");
+    const jsonPayload = decodeURIComponent(
+      atob(base64)
+        .split("")
+        .map((c) => "%" + ("00" + c.charCodeAt(0).toString(16)).slice(-2))
+        .join("")
+    );
+    return JSON.parse(jsonPayload);
+  } catch {
+    return null;
+  }
+}
 
 let socket: Socket | null = null;
 
 export function connectSocket(token: string) {
+  if (token) {
+    const payload = parseTokenPayload(token);
+    if (payload) {
+      if (payload.adminName) {
+        store.dispatch(setAdminName(payload.adminName));
+      }
+      store.dispatch(
+        setMeetingInfo({
+          name: payload.meetingName || undefined,
+          adminName: payload.adminName || undefined,
+          url: payload.meetingUrl || undefined,
+        })
+      );
+    }
+  }
+
   if (socket) return socket; // prevent duplicate connections
 
   socket = io(process.env.NEXT_PUBLIC_SOCKET_URL!, {

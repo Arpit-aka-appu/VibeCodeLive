@@ -100,7 +100,6 @@ const Base = ({
       router.replace("/meeting/join");
       return;
     }
-    console.log("connecting socket with token:", token);
 
     connectSocket(token);
     dispatch(setMeetingId(id));
