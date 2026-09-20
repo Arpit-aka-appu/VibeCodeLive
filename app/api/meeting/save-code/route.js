@@ -6,7 +6,7 @@ import { NextResponse } from "next/server";
 export async function POST(req) {
   try {
     await connectDB();
-    const { meetingId, code, output } = await req.json();
+    const { meetingId, code, output, language } = await req.json();
 
     if (!meetingId) {
       return NextResponse.json(
@@ -21,6 +21,7 @@ export async function POST(req) {
 
     const updateFields = {};
     if (typeof code === "string") updateFields["data.code"] = code;
+    if (typeof language === "string") updateFields["data.language"] = language;
     if (Array.isArray(output)) updateFields["data.output"] = output;
 
     await Meeting.updateOne(filter, { $set: updateFields });

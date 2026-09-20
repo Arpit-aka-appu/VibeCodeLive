@@ -1,23 +1,17 @@
 "use client";
 import Split from "react-split";
-import { io, Socket } from "socket.io-client";
 import { RiCodeSSlashLine } from "react-icons/ri";
-import { BsClipboard2 } from "react-icons/bs";
-import { HiOutlineBookOpen } from "react-icons/hi2";
 import { FiUser } from "react-icons/fi";
 import { VscComment } from "react-icons/vsc";
 import { IoIosInformationCircleOutline } from "react-icons/io";
 import { TbNotes } from "react-icons/tb";
-import { GoQuestion } from "react-icons/go";
 import Nav_Link from "@/components/Member/Nav_Link";
 import AdminLiveCodeViewer from "@/components/Member/AdminLiveCodeViewer";
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { useRouter, useParams } from "next/navigation";
 import { connectSocket, joinMeeting } from "@/lib/socketService";
 import { setMeetingId } from "@/store/meetingSlice";
-import { useDispatch } from "react-redux";
-
-let socket: Socket | null = null;
+import { useDispatch, useSelector } from "react-redux";
 
 const Base = ({
   left,
@@ -26,36 +20,11 @@ const Base = ({
   left: React.ReactNode;
   right: React.ReactNode;
 }) => {
-    const { id } = useParams<{ id: string }>();
- 
-  // this is left side nav links array
-  const rightNavArray = [
-    {
-      title: "Code",
-      icon: <RiCodeSSlashLine className="text-green-500" />,
-      className: "",
-      href: `/meeting/member/${id}/code`,
-    },
-    {
-      title: "WhiteBoard",
-      icon: <BsClipboard2 className="text-zinc-300 " />,
-      className: "",
-      href: `/meeting/member/${id}/whiteboard`,
-    },
-    {
-      title: "Resourses",
-      icon: <HiOutlineBookOpen className="text-blue-500" />,
-      className: "",
-      href: `/meeting/member/${id}/resourses`,
-    },
-    {
-      title: "Problems",
-      icon: <GoQuestion className="text-red-500" />,
-      className: "",
-      href: `/meeting/member/${id}/problems`,
-    },
-  ];
+  const { id } = useParams<{ id: string }>();
 
+  const unreadCount = useSelector(
+    (state: { chat?: { unreadCount?: number } }) => state.chat?.unreadCount || 0
+  );
 
   const leftNavArray = [
     {
@@ -71,10 +40,11 @@ const Base = ({
       href: `/meeting/member/${id}/members`,
     },
     {
-      title: "Comments",
+      title: "Live Chat",
       icon: <VscComment className="text-blue-500" />,
       className: "",
       href: `/meeting/member/${id}/comments`,
+      badge: unreadCount,
     },
     {
       title: "Notes",
@@ -150,6 +120,7 @@ const Base = ({
               icon={link.icon}
               className={link.className}
               href={link.href}
+              badge={link.badge}
             />
           ))}
         </div>

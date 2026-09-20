@@ -96,6 +96,8 @@ io.use((socket, next) => {
 const roomAdminState = new Map();
 // In-memory room state for latest student snapshots: meetingId -> Map(studentId -> { snapshot, from, studentId, username })
 const roomStudentSnapshots = new Map();
+// In-memory cache for recent chat messages: meetingId -> Array of ChatMessage objects (max 50)
+const roomChatMessages = new Map();
 
 // CONNECTION
 io.on("connection", (socket) => {
@@ -176,19 +178,95 @@ io.on("connection", (socket) => {
     }
   });
 
-  socket.on("send-message", ({ text, meetingId, eventId, clientTimestamp }) => {
-    console.log(`Message in : ${text}`);
+  // 💬 Real-Time Classroom Chat Handler
+  socket.on("send-chat-message", (payload, ack) => {
+    const userId = socket.data?.userId || socket.user?.id;
+    const username = socket.data?.username || socket.user?.username || "Participant";
+    const role = socket.data?.role || socket.user?.role || "student";
+    const isHost = socket.data?.isHost ?? socket.user?.isHost ?? false;
 
-    io.to(meetingId).emit("receive-message", {
-      text,
-      from: socket.data.username,
-      eventId,
-      clientTimestamp,
+    if (!userId) {
+      if (typeof ack === "function") ack({ ok: false, error: "UNAUTHORIZED" });
+      return;
+    }
+
+    const meetingId = payload?.meetingId;
+    if (!meetingId) {
+      if (typeof ack === "function") ack({ ok: false, error: "MISSING_MEETING_ID" });
+      return;
+    }
+
+    // Authorization: ensure user belongs to this meeting
+    const tokenMeetingId = socket.data?.meetingId || socket.user?.meetingId;
+    const tokenMeetingUrl = socket.data?.meetingUrl || socket.user?.meetingUrl;
+
+    if (tokenMeetingId && tokenMeetingUrl) {
+      const matches =
+        String(tokenMeetingId) === String(meetingId) ||
+        String(tokenMeetingUrl) === String(meetingId);
+      if (!matches) {
+        if (typeof ack === "function") ack({ ok: false, error: "FORBIDDEN" });
+        return;
+      }
+    }
+
+    const messageText = (payload?.message || payload?.text || "").trim();
+    if (!messageText || messageText.length > 1000) {
+      if (typeof ack === "function") ack({ ok: false, error: "INVALID_LENGTH" });
+      return;
+    }
+
+    const senderRole = isHost ? "teacher" : (role === "teacher" ? "teacher" : "student");
+
+    const chatMessage = {
+      _id: payload?._id || `${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
+      meetingId: String(meetingId),
+      senderId: String(userId),
+      senderName: username,
+      senderRole,
+      message: messageText,
+      createdAt: payload?.createdAt || new Date().toISOString(),
+    };
+
+    // Cache in room chat history (max 50)
+    const targetRooms = new Set();
+    if (meetingId) targetRooms.add(meetingId);
+    if (socket.data?.meetingUrl) targetRooms.add(socket.data.meetingUrl);
+    if (socket.data?.meetingId) targetRooms.add(String(socket.data.meetingId));
+
+    for (const roomKey of targetRooms) {
+      const history = roomChatMessages.get(roomKey) || [];
+      history.push(chatMessage);
+      if (history.length > 50) history.shift();
+      roomChatMessages.set(roomKey, history);
+    }
+
+    let broadcast = io;
+    for (const roomKey of targetRooms) {
+      broadcast = broadcast.to(roomKey);
+    }
+
+    broadcast.emit("receive-chat-message", chatMessage);
+
+    // Legacy broadcast for backward compatibility
+    broadcast.emit("receive-message", {
+      text: messageText,
+      from: username,
+      ...chatMessage,
     });
+
+    if (typeof ack === "function") {
+      ack({ ok: true, message: chatMessage });
+    }
   });
 
-  socket.on("send-code", ({ code, meetingId, eventId, clientTimestamp }) => {
-    console.log(`Code update in : ${code} from ${socket.data.username} and meetingId: ${meetingId}`);
+  socket.on("send-message", (payload, ack) => {
+    // Forward legacy send-message through send-chat-message
+    socket.emit("send-chat-message", payload, ack);
+  });
+
+  socket.on("send-code", ({ code, language, meetingId, eventId, clientTimestamp }) => {
+    console.log(`Code update in : ${code?.length} chars (${language}) from ${socket.data.username} and meetingId: ${meetingId}`);
 
     const targetRooms = new Set();
     if (meetingId) targetRooms.add(meetingId);
@@ -200,6 +278,7 @@ io.on("connection", (socket) => {
       roomAdminState.set(roomKey, {
         ...prev,
         code,
+        language: language || prev.language || "javascript",
         adminName: socket.data?.username || socket.data?.userId,
         timestamp: Date.now(),
       });
@@ -211,6 +290,7 @@ io.on("connection", (socket) => {
     }
     broadcast.emit("receive-code", {
       code,
+      language: language || "javascript",
       from: socket.data?.username || socket.data?.userId,
       eventId,
       clientTimestamp,

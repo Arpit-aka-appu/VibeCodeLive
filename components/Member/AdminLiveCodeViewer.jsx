@@ -16,12 +16,7 @@ import {
   getSocketInstance,
 } from "@/lib/socketService";
 import { fetchMeetingDetails } from "@/lib/meetingApi";
-
-const DEFAULT_STARTER_CODE = `// Instructor Live Workspace
-// Write JavaScript code here
-
-console.log("Hello from Instructor!");
-`;
+import { getLanguageConfig, DEFAULT_LANGUAGE } from "@/lib/languageConfig";
 
 const AdminLiveCodeViewer = () => {
   const params = useParams();
@@ -38,14 +33,21 @@ const AdminLiveCodeViewer = () => {
   const isConnected = connectionStatus === "connected";
 
   const [localAdminCode, setLocalAdminCode] = useState(null);
+  const [localAdminLanguage, setLocalAdminLanguage] = useState(null);
   const [localAdminOutput, setLocalAdminOutput] = useState(null);
   const [copied, setCopied] = useState(false);
   const [lastSyncTime, setLastSyncTime] = useState(null);
 
+  const adminLanguage =
+    localAdminLanguage ||
+    meetingInfo?.language ||
+    DEFAULT_LANGUAGE;
+  const adminLangConfig = getLanguageConfig(adminLanguage);
+
   const adminCode =
     localAdminCode !== null
       ? localAdminCode
-      : (typeof meetingInfo?.code === "string" ? meetingInfo.code : DEFAULT_STARTER_CODE);
+      : (typeof meetingInfo?.code === "string" ? meetingInfo.code : adminLangConfig.defaultCode);
 
   const adminOutput = useMemo(() => {
     if (localAdminOutput !== null) return localAdminOutput;
@@ -82,19 +84,20 @@ const AdminLiveCodeViewer = () => {
     }
   }, [adminCode]);
 
-  // Fetch meeting code from DB on mount as initial fallback
+  // Fetch meeting code and language from DB on mount as initial fallback
   useEffect(() => {
     if (meetingId) {
       fetchMeetingDetails(meetingId).then((m) => {
         if (!hasReceivedLiveCode.current) {
           if (typeof m?.code === "string") setLocalAdminCode(m.code);
+          if (typeof m?.language === "string") setLocalAdminLanguage(m.language);
           if (Array.isArray(m?.output) && m.output.length > 0) setLocalAdminOutput(m.output);
         }
       });
     }
   }, [meetingId]);
 
-  // Set up socket listeners for live instructor code and output
+  // Set up socket listeners for live instructor code, language, and output
   useEffect(() => {
     if (!meetingId) return;
 
@@ -113,11 +116,14 @@ const AdminLiveCodeViewer = () => {
       }
     }
 
-    // 2. Real-time code updates from instructor
-    const unsubCode = onReceiveAdminCode(({ code }) => {
+    // 2. Real-time code and language updates from instructor
+    const unsubCode = onReceiveAdminCode(({ code, language }) => {
       if (typeof code === "string") {
         hasReceivedLiveCode.current = true;
         setLocalAdminCode(code);
+        if (typeof language === "string") {
+          setLocalAdminLanguage(language);
+        }
         setLastSyncTime(new Date().toLocaleTimeString());
       }
     });
@@ -135,6 +141,9 @@ const AdminLiveCodeViewer = () => {
         if (typeof state.code === "string" && state.code) {
           hasReceivedLiveCode.current = true;
           setLocalAdminCode(state.code);
+        }
+        if (typeof state.language === "string" && state.language) {
+          setLocalAdminLanguage(state.language);
         }
         if (Array.isArray(state.output)) {
           setLocalAdminOutput(state.output);
@@ -215,6 +224,13 @@ const AdminLiveCodeViewer = () => {
               </span>
               <span>{isConnected ? "Live Sync" : "Syncing"}</span>
             </div>
+
+            {/* Instructor Active Language Badge */}
+            <div className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-zinc-800/80 border border-zinc-700/60 text-zinc-300">
+              <span className="text-[9px] uppercase tracking-wider text-blue-400 font-bold">
+                {adminLangConfig.label}
+              </span>
+            </div>
           </div>
 
           <div className="flex items-center gap-2 shrink-0">
@@ -253,7 +269,7 @@ const AdminLiveCodeViewer = () => {
         <div className="flex-1 min-h-0">
           <Editor
             height="100%"
-            defaultLanguage="javascript"
+            language={adminLangConfig.monacoLanguage}
             theme="custom-bg"
             beforeMount={beforeMount}
             onMount={handleEditorMount}

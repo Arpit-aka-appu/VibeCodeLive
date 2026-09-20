@@ -18,14 +18,25 @@ import {
 } from "@/lib/socketService";
 import { useParams } from "next/navigation.js";
 import { useSelector } from "react-redux";
+import LanguageSelector from "@/components/common/LanguageSelector";
+import { getLanguageConfig, DEFAULT_LANGUAGE } from "@/lib/languageConfig";
 
 const Code = () => {
-  const [Code, setCode] = useState("");
+  const [selectedLanguage, setSelectedLanguage] = useState(DEFAULT_LANGUAGE);
+  const [formatNotice, setFormatNotice] = useState(null);
+  const selectedLangConfig = getLanguageConfig(selectedLanguage);
+
+  const [Code, setCode] = useState(selectedLangConfig.defaultCode);
   const [Output, setOutput] = useState([]);
   const [CodeCompiling, setCodeCompiling] = useState(false);
 
   const outputRef = useRef(null);
   const codeRef = useRef(Code);
+  const selectedLanguageRef = useRef(selectedLanguage);
+  const codeByLanguageRef = useRef({
+    [selectedLanguage]: Code,
+  });
+  const editorInstanceRef = useRef(null);
   const outputHistoryRef = useRef(Output);
   const { id } = useParams();
 
@@ -43,10 +54,16 @@ const Code = () => {
   const studentId = currentUser?.id || "student_guest";
   const studentName = currentUser?.username || "Student";
 
+  // Keep selectedLanguageRef updated
+  useEffect(() => {
+    selectedLanguageRef.current = selectedLanguage;
+  }, [selectedLanguage]);
+
   // Keep codeRef and outputHistoryRef updated with the latest state
   useEffect(() => {
     codeRef.current = Code;
-  }, [Code]);
+    codeByLanguageRef.current[selectedLanguage] = Code;
+  }, [Code, selectedLanguage]);
 
   useEffect(() => {
     outputHistoryRef.current = Output;
@@ -60,7 +77,7 @@ const Code = () => {
         requestId,
         meetingId: meetingId || id,
         code: codeRef.current || "",
-        language: "javascript",
+        language: selectedLanguageRef.current || DEFAULT_LANGUAGE,
       });
     });
 
@@ -84,94 +101,122 @@ print(add(2, 3))
 `.trim();
 
   // ── Hook: initialise student tracking ────────────────────────────────────
-  const { getReport, attachMonacoListeners, triggerSnapshot } = useStudentTracking({
-    studentId,
-    assignmentId: "assignment_07",
-    code: Code,
-    output: Output,
-    referenceCode: REFERENCE_CODE,
+  const { getReport, attachMonacoListeners, triggerSnapshot } =
+    useStudentTracking({
+      studentId,
+      assignmentId: "assignment_07",
+      code: Code,
+      output: Output,
+      referenceCode: REFERENCE_CODE,
 
-    onFlag: (flagEvent) => {
-      console.log("FLAG RAISED:", flagEvent);
-      if (flagEvent.type === "STUCK_ON_LINE") {
-        console.info("💡 Hint: student stuck on line", flagEvent.line);
-      }
-      if (flagEvent.type === "IDLE_TOO_LONG") {
-        console.info("💡 Hint: student has been idle for 3+ minutes");
-      }
-    },
-
-    // Called on initial 5s warmup and every 30s periodically
-    onSnapshot: async () => {
-      // Teachers and hosts must never send student snapshots of their own
-      if (isHost) return;
-
-      const report = getReport();
-      const currentCode = codeRef.current || "";
-      const latestOut =
-        outputHistoryRef.current.length > 0
-          ? outputHistoryRef.current.at(-1)?.Data || ""
-          : "";
-
-      const snapshotBody = {
-        ...report,
-        studentId,
-        studentName,
-        code: currentCode,
-        latestOutput: latestOut,
-      };
-
-      try {
-        const res = await fetch("/api/meeting/snapShot", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(snapshotBody),
-        });
-
-        if (res.ok) {
-          const data = await res.json();
-          if (data?.snapshot) {
-            console.log("Snapshot sent successfully:", data.snapshot);
-            sendCodeSnapshot(id, data.snapshot);
-            return;
-          }
+      onFlag: (flagEvent) => {
+        console.log("FLAG RAISED:", flagEvent);
+        if (flagEvent.type === "STUCK_ON_LINE") {
+          console.info("💡 Hint: student stuck on line", flagEvent.line);
         }
-      } catch (err) {
-        console.warn("[Snapshot] API fetch failed, falling back to direct telemetry:", err);
-      }
+        if (flagEvent.type === "IDLE_TOO_LONG") {
+          console.info("💡 Hint: student has been idle for 3+ minutes");
+        }
+      },
 
-      // Resilient fallback snapshot if API endpoint fails
-      const fallbackSnapshot = {
-        studentId,
-        studentName,
-        status: currentCode.trim().length > 0 ? "coding" : "idle",
-        label: "on-track",
-        contextLines: `Keystrokes: ${report.keystrokes}\nRun attempts: ${report.runAttempts}`,
-        score: report.keystrokes > 10 ? 75 : 35,
-        summary: {
-          whatStudentDid:
-            currentCode.trim().length > 0
-              ? "Student is working on their solution."
-              : "Student joined the classroom.",
-          struggling: null,
-          doingWell: "Active session",
-          suspiciousBehavior: null,
-          adviceForTeacher: "Monitor progress.",
-        },
-        generatedAt: new Date().toISOString(),
-      };
-      sendCodeSnapshot(id, fallbackSnapshot);
-    },
-  });
+      // Called on initial 5s warmup and every 30s periodically
+      onSnapshot: async () => {
+        // Teachers and hosts must never send student snapshots of their own
+        if (isHost) return;
+
+        const report = getReport();
+        const currentCode = codeRef.current || "";
+        const latestOut =
+          outputHistoryRef.current.length > 0
+            ? outputHistoryRef.current.at(-1)?.Data || ""
+            : "";
+
+        const snapshotBody = {
+          ...report,
+          studentId,
+          studentName,
+          code: currentCode,
+          latestOutput: latestOut,
+        };
+
+        try {
+          const res = await fetch("/api/meeting/snapShot", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(snapshotBody),
+          });
+
+          if (res.ok) {
+            const data = await res.json();
+            if (data?.snapshot) {
+              console.log("Snapshot sent successfully:", data.snapshot);
+              sendCodeSnapshot(id, data.snapshot);
+              return;
+            }
+          }
+        } catch (err) {
+          console.warn(
+            "[Snapshot] API fetch failed, falling back to direct telemetry:",
+            err,
+          );
+        }
+
+        // Resilient fallback snapshot if API endpoint fails
+        const fallbackSnapshot = {
+          studentId,
+          studentName,
+          status: currentCode.trim().length > 0 ? "coding" : "idle",
+          label: "on-track",
+          contextLines: `Keystrokes: ${report.keystrokes}\nRun attempts: ${report.runAttempts}`,
+          score: report.keystrokes > 10 ? 75 : 35,
+          summary: {
+            whatStudentDid:
+              currentCode.trim().length > 0
+                ? "Student is working on their solution."
+                : "Student joined the classroom.",
+            struggling: null,
+            doingWell: "Active session",
+            suspiciousBehavior: null,
+            adviceForTeacher: "Monitor progress.",
+          },
+          generatedAt: new Date().toISOString(),
+        };
+        sendCodeSnapshot(id, fallbackSnapshot);
+      },
+    });
+
+  const handleLanguageChange = (newLangId) => {
+    if (newLangId === selectedLanguage) return;
+
+    // Cache current code for currently selected language
+    codeByLanguageRef.current[selectedLanguage] = Code;
+
+    const nextConfig = getLanguageConfig(newLangId);
+    const nextCode =
+      codeByLanguageRef.current[newLangId] !== undefined
+        ? codeByLanguageRef.current[newLangId]
+        : nextConfig.defaultCode;
+
+    setSelectedLanguage(newLangId);
+    setCode(nextCode);
+    codeRef.current = nextCode;
+
+    if (editorInstanceRef.current) {
+      editorInstanceRef.current.setValue(nextCode);
+    }
+  };
 
   async function runCode() {
     setCodeCompiling(true);
+    const currentLangConfig = getLanguageConfig(selectedLanguage);
     try {
       const res = await fetch("/api/run", {
         method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           code: Code,
-          language_id: 63, // JavaScript
+          language: currentLangConfig.compilerLanguage,
+          language_id: currentLangConfig.judge0Id,
           input: "",
         }),
       });
@@ -198,9 +243,34 @@ print(add(2, 3))
     }
   }
 
+  const handleFormatCode = () => {
+    const currentLangConfig = getLanguageConfig(selectedLanguage);
+    if (!currentLangConfig.supportsFormat) {
+      setFormatNotice(
+        "Formatting is currently supported for JavaScript and TypeScript.",
+      );
+      setTimeout(() => setFormatNotice(null), 3000);
+      return;
+    }
+    editorInstanceRef.current?.getAction("editor.action.formatDocument")?.run();
+  };
+
+  const handleSaveCode = () => {
+    try {
+      if (typeof window !== "undefined") {
+        localStorage.setItem(`tv_student_code_${id}_${selectedLanguage}`, Code);
+        setFormatNotice("Code saved locally!");
+        setTimeout(() => setFormatNotice(null), 2500);
+      }
+    } catch (e) {
+      console.warn("Could not save to localStorage", e);
+    }
+  };
+
   // ── Monaco onMount: attach all listeners ─────────────────────────────────
   const handleEditorMount = useCallback(
     (editor) => {
+      editorInstanceRef.current = editor;
       attachMonacoListeners(editor);
     },
     [attachMonacoListeners],
@@ -228,33 +298,52 @@ print(add(2, 3))
     >
       {/* Code section */}
       <div className="bg-[#262626] h-full rounded-b-lg border-x-[0.5px] border-b-[0.5px] border-zinc-600 flex flex-col">
-        <div className="border-b-[0.5px] border-zinc-600 w-full h-8 flex items-center justify-end p-1 gap-1">
-          <div
-            onClick={runCode}
-            className="group relative p-1.5 rounded-sm hover:bg-[#333333] cursor-pointer"
-          >
-            <LuTriangle className="text-zinc-300 rotate-90 text-sm " />
-            <span className="absolute top-full right-0 mb-2 bg-zinc-900 z-10 text-white text-xs px-3 py-1.5 rounded hidden group-hover:block transition whitespace-nowrap">
-              Run
-            </span>
+        <div className="border-b-[0.5px] border-zinc-600 w-full h-8 flex items-center justify-between px-2 relative">
+          <div className="flex items-center">
+            <LanguageSelector
+              value={selectedLanguage}
+              onChange={handleLanguageChange}
+              align="right"
+            />
           </div>
-          <div className="group relative p-1.5 rounded-sm hover:bg-[#333333] cursor-pointer">
-            <AiOutlineAlignLeft className="text-zinc-300  " />
-            <span className="absolute top-full right-0 mb-2 z-10 bg-zinc-900 text-white text-xs px-3 py-1.5 rounded hidden group-hover:block transition whitespace-nowrap">
-              Formate Code
-            </span>
+
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={runCode}
+              disabled={CodeCompiling}
+              className="flex items-center gap-1 px-2.5 py-1 rounded bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold shadow-sm transition-colors cursor-pointer disabled:opacity-50"
+              title="Run Code"
+            >
+              <LuTriangle className="rotate-90 text-[10px]" />
+              <span>{CodeCompiling ? "Running..." : "Run"}</span>
+            </button>
+            <div
+              onClick={handleFormatCode}
+              className="group relative p-1.5 rounded-sm hover:bg-[#333333] cursor-pointer text-zinc-300"
+              title="Format Code"
+            >
+              <AiOutlineAlignLeft className="text-zinc-300" />
+            </div>
+            <div
+              onClick={handleSaveCode}
+              className="group relative p-1.5 rounded-sm hover:bg-[#333333] cursor-pointer text-zinc-300"
+              title="Save Code Locally"
+            >
+              <IoBookmarkOutline className="text-zinc-300" />
+            </div>
           </div>
-          <div className="group relative p-1.5 rounded-sm hover:bg-[#333333] cursor-pointer">
-            <IoBookmarkOutline className="text-zinc-300  " />
-            <span className="absolute top-full right-0 mb-2 z-10 bg-zinc-900 text-white text-xs px-3 py-1.5 rounded hidden group-hover:block transition whitespace-nowrap">
-              Save
-            </span>
-          </div>
+
+          {formatNotice && (
+            <div className="absolute top-9 right-2 z-40 bg-zinc-800 border border-zinc-600/80 text-zinc-200 text-xs px-2.5 py-1 rounded shadow-xl whitespace-nowrap animate-in fade-in">
+              {formatNotice}
+            </div>
+          )}
         </div>
         <div className="flex-1 min-h-0">
           <Editor
             height="100%"
-            defaultLanguage="javascript"
+            language={selectedLangConfig.monacoLanguage}
             defaultValue="// write code there"
             theme="custom-bg"
             beforeMount={beforeMount}

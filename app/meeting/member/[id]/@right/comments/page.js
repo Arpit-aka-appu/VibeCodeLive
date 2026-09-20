@@ -1,11 +1,18 @@
-import React from 'react'
+"use client";
 
-const comments = () => {
+import React from "react";
+import { useParams } from "next/navigation";
+import MeetingChat from "@/components/chat/MeetingChat";
+
+const CommentsPage = () => {
+  const params = useParams();
+  const meetingId = typeof params?.id === "string" ? params.id : "";
+
   return (
-    <div className="h-full w-full bg-[#262626] rounded-b-lg border-x-[0.5px] border-b-[0.5px] border-zinc-600">
-      this is comments page
+    <div className="h-full w-full overflow-hidden">
+      <MeetingChat meetingId={meetingId} />
     </div>
-  )
-}
+  );
+};
 
-export default comments
+export default CommentsPage;

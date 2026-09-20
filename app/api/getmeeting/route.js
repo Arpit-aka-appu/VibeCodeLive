@@ -41,6 +41,7 @@ main();
 `;
 
     const code = meeting.data?.code || defaultCode;
+    const language = meeting.data?.language || "javascript";
     const output = meeting.data?.output || [
       {
         Data: `Welcome to ${meeting.name || "TeachView Live"}!`,
@@ -51,10 +52,11 @@ main();
 
     const meetingObj = meeting.toObject ? meeting.toObject() : meeting;
     meetingObj.code = code;
+    meetingObj.language = language;
     meetingObj.output = output;
 
     return new NextResponse(
-      JSON.stringify({ success: true, meeting: meetingObj, members, code, output }),
+      JSON.stringify({ success: true, meeting: meetingObj, members, code, language, output }),
       { status: 200 }
     );
   } catch (error) {

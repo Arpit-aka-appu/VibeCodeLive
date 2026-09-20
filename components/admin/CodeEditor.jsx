@@ -11,6 +11,8 @@ import { AiOutlineAlignLeft } from "react-icons/ai";
 import { IoBookmarkOutline, IoReload } from "react-icons/io5";
 import { sendAdminCode, sendAdminOutput, getSocketInstance } from "@/lib/socketService";
 import { saveMeetingCode } from "@/lib/meetingApi";
+import LanguageSelector from "@/components/common/LanguageSelector";
+import { getLanguageConfig, DEFAULT_LANGUAGE } from "@/lib/languageConfig";
 
 const Code = () => {
   const params = useParams();
@@ -18,13 +20,19 @@ const Code = () => {
   const meetingIdFromState = useSelector((state) => state.meeting.meetingId);
   const meetingId = meetingIdFromState || params?.id;
 
+  const [selectedLanguage, setSelectedLanguage] = useState(
+    () => meetingInfo?.language || DEFAULT_LANGUAGE
+  );
+  const [formatNotice, setFormatNotice] = useState(null);
+  const selectedLangConfig = getLanguageConfig(selectedLanguage);
+
   const [editedCode, setEditedCode] = useState(null);
   const Code =
     editedCode !== null
       ? editedCode
       : (typeof meetingInfo?.code === "string"
           ? meetingInfo.code
-          : "// Write JavaScript code here\nconsole.log('Hello from Instructor!');\n");
+          : selectedLangConfig.defaultCode);
 
   const [localOutput, setLocalOutput] = useState(null);
   const Output = useMemo(() => {
@@ -38,10 +46,18 @@ const Code = () => {
   const outputRef = useRef(null);
   const outputHistoryRef = useRef(Output);
   const codeRef = useRef(Code);
+  const selectedLanguageRef = useRef(selectedLanguage);
+  const codeByLanguageRef = useRef({
+    [selectedLanguage]: Code,
+  });
   const hasUserEdited = useRef(false);
   const syncTimerRef = useRef(null);
   const dbSaveTimerRef = useRef(null);
   const editorRef = useRef(null);
+
+  useEffect(() => {
+    selectedLanguageRef.current = selectedLanguage;
+  }, [selectedLanguage]);
 
   useEffect(() => {
     outputHistoryRef.current = Output;
@@ -49,51 +65,59 @@ const Code = () => {
 
   useEffect(() => {
     codeRef.current = Code;
-  }, [Code]);
+    codeByLanguageRef.current[selectedLanguage] = Code;
+  }, [Code, selectedLanguage]);
 
-  // Synchronize Monaco editor instance if DB meeting code arrives before instructor started typing
+  // Synchronize Monaco editor instance if DB meeting code/language arrives before instructor started typing
+  useEffect(() => {
+    if (meetingInfo?.language && meetingInfo.language !== selectedLanguage && !hasUserEdited.current) {
+      setSelectedLanguage(meetingInfo.language);
+    }
+  }, [meetingInfo?.language, selectedLanguage]);
+
   useEffect(() => {
     if (editedCode === null && typeof meetingInfo?.code === "string") {
       codeRef.current = meetingInfo.code;
+      codeByLanguageRef.current[selectedLanguage] = meetingInfo.code;
       if (editorRef.current && editorRef.current.getValue() !== meetingInfo.code) {
         editorRef.current.setValue(meetingInfo.code);
       }
     }
-  }, [meetingInfo?.code, editedCode]);
+  }, [meetingInfo?.code, editedCode, selectedLanguage]);
 
   // Fast socket broadcast (60ms) decoupled from slower DB persistence (1500ms)
   const broadcastCode = useCallback(
-    (newCode) => {
+    (newCode, langId = selectedLanguageRef.current) => {
       if (!meetingId) return;
 
-      // 1. Fast socket broadcast to classroom
+      // 1. Fast socket broadcast to classroom with language metadata
       if (syncTimerRef.current) {
         clearTimeout(syncTimerRef.current);
       }
       syncTimerRef.current = setTimeout(() => {
-        sendAdminCode(meetingId, newCode);
+        sendAdminCode(meetingId, newCode, langId);
       }, 60);
 
-      // 2. Throttled DB persist (saves to MongoDB without spamming HTTP requests)
+      // 2. Throttled DB persist (saves code + language to MongoDB)
       if (dbSaveTimerRef.current) {
         clearTimeout(dbSaveTimerRef.current);
       }
       dbSaveTimerRef.current = setTimeout(() => {
-        saveMeetingCode(meetingId, newCode, outputHistoryRef.current);
+        saveMeetingCode(meetingId, newCode, outputHistoryRef.current, langId);
       }, 1500);
     },
     [meetingId]
   );
 
-  // Send initial code when meetingId or socket connection is established
+  // Send initial code and language when meetingId or socket connection is established
   useEffect(() => {
     if (!meetingId) return;
-    sendAdminCode(meetingId, codeRef.current);
+    sendAdminCode(meetingId, codeRef.current, selectedLanguage);
 
     const socket = getSocketInstance();
     if (socket) {
       const onConnect = () => {
-        sendAdminCode(meetingId, codeRef.current);
+        sendAdminCode(meetingId, codeRef.current, selectedLanguage);
         if (outputHistoryRef.current?.length > 0) {
           sendAdminOutput(meetingId, outputHistoryRef.current);
         }
@@ -101,7 +125,7 @@ const Code = () => {
       socket.on("connect", onConnect);
       return () => socket.off("connect", onConnect);
     }
-  }, [meetingId]);
+  }, [meetingId, selectedLanguage]);
 
   // Auto-scroll output console
   useEffect(() => {
@@ -111,10 +135,39 @@ const Code = () => {
     });
   }, [Output, CodeCompiling]);
 
-  // Execute Code via /api/run and broadcast output to students in real-time
+  // Switch programming language while preserving code written across languages
+  const handleLanguageChange = (newLangId) => {
+    if (newLangId === selectedLanguage) return;
+
+    // 1. Save currently written code to cache for the current language
+    codeByLanguageRef.current[selectedLanguage] = Code;
+
+    // 2. Look up config and existing code for selected language (or fallback to starter template)
+    const nextConfig = getLanguageConfig(newLangId);
+    const nextCode =
+      codeByLanguageRef.current[newLangId] !== undefined
+        ? codeByLanguageRef.current[newLangId]
+        : nextConfig.defaultCode;
+
+    hasUserEdited.current = true;
+    setSelectedLanguage(newLangId);
+    setEditedCode(nextCode);
+    codeRef.current = nextCode;
+
+    if (editorRef.current) {
+      editorRef.current.setValue(nextCode);
+    }
+
+    // 3. Immediately broadcast new code and language to classroom and persist
+    broadcastCode(nextCode, newLangId);
+  };
+
+  // Execute Code via /api/run with selected language and broadcast output to students in real-time
   const runCode = async () => {
     if (CodeCompiling) return;
     setCodeCompiling(true);
+
+    const currentLangConfig = getLanguageConfig(selectedLanguage);
 
     try {
       const res = await fetch("/api/run", {
@@ -122,7 +175,8 @@ const Code = () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           code: Code,
-          language_id: 63, // JavaScript
+          language: currentLangConfig.compilerLanguage,
+          language_id: currentLangConfig.judge0Id,
           input: "",
         }),
       });
@@ -178,13 +232,19 @@ const Code = () => {
   };
 
   const handleFormatCode = () => {
+    const currentLangConfig = getLanguageConfig(selectedLanguage);
+    if (!currentLangConfig.supportsFormat) {
+      setFormatNotice(`Formatting is currently supported for JavaScript and TypeScript.`);
+      setTimeout(() => setFormatNotice(null), 3000);
+      return;
+    }
     editorRef.current?.getAction("editor.action.formatDocument")?.run();
   };
 
   const handleSaveCode = () => {
     if (meetingId) {
-      saveMeetingCode(meetingId, Code, Output);
-      sendAdminCode(meetingId, Code);
+      saveMeetingCode(meetingId, Code, Output, selectedLanguage);
+      sendAdminCode(meetingId, Code, selectedLanguage);
     }
   };
 
@@ -208,7 +268,7 @@ const Code = () => {
             Instructor Workspace (Live Broadcasting)
           </span>
 
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-1.5 relative">
             <button
               type="button"
               onClick={runCode}
@@ -219,6 +279,11 @@ const Code = () => {
               <LuTriangle className="rotate-90 text-[10px]" />
               <span>{CodeCompiling ? "Running..." : "Run"}</span>
             </button>
+            <LanguageSelector
+              value={selectedLanguage}
+              onChange={handleLanguageChange}
+              align="left"
+            />
             <div
               onClick={handleFormatCode}
               className="group relative p-1.5 rounded-sm hover:bg-[#333333] cursor-pointer text-zinc-300"
@@ -233,13 +298,19 @@ const Code = () => {
             >
               <IoBookmarkOutline />
             </div>
+
+            {formatNotice && (
+              <div className="absolute top-9 right-0 z-40 bg-zinc-800 border border-zinc-600/80 text-zinc-200 text-xs px-2.5 py-1 rounded shadow-xl whitespace-nowrap animate-in fade-in">
+                {formatNotice}
+              </div>
+            )}
           </div>
         </div>
 
         <div className="flex-1 min-h-0">
           <Editor
             height="100%"
-            defaultLanguage="javascript"
+            language={selectedLangConfig.monacoLanguage}
             theme="custom-bg"
             beforeMount={beforeMount}
             value={Code}

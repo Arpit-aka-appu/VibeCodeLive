@@ -12,6 +12,7 @@ import {
   setAdminName,
   setMeetingInfo,
 } from "@/store/meetingSlice";
+import { addChatMessage, resetChat, type ChatMessage } from "@/store/chatSlice";
 
 export function parseTokenPayload(token: string) {
   try {
@@ -39,14 +40,15 @@ export type OutputEntry = {
 };
 
 // Persistent listener sets that survive component mount ordering and reconnections
-const adminCodeListeners = new Set<(data: { code: string; from: string }) => void>();
+const adminCodeListeners = new Set<(data: { code: string; language?: string; from: string }) => void>();
 const adminOutputListeners = new Set<(data: { output: OutputEntry[]; from: string }) => void>();
 const adminStateSyncListeners = new Set<
-  (data: { code?: string; output?: OutputEntry[]; adminName?: string }) => void
+  (data: { code?: string; language?: string; output?: OutputEntry[]; adminName?: string }) => void
 >();
+const chatMessageListeners = new Set<(message: ChatMessage) => void>();
 
 let pendingMeetingIdStateRequest: string | null = null;
-let pendingAdminCodeEmit: { meetingId: string; code: string } | null = null;
+let pendingAdminCodeEmit: { meetingId: string; code: string; language?: string } | null = null;
 let pendingAdminOutputEmit: { meetingId: string; output: OutputEntry[] } | null = null;
 
 export function connectSocket(token: string) {
@@ -87,7 +89,7 @@ export function connectSocket(token: string) {
       socket?.emit("get-admin-state", { meetingId: pendingMeetingIdStateRequest });
     }
     if (pendingAdminCodeEmit) {
-      sendAdminCode(pendingAdminCodeEmit.meetingId, pendingAdminCodeEmit.code);
+      sendAdminCode(pendingAdminCodeEmit.meetingId, pendingAdminCodeEmit.code, pendingAdminCodeEmit.language);
       pendingAdminCodeEmit = null;
     }
     if (pendingAdminOutputEmit) {
@@ -122,10 +124,10 @@ export function connectSocket(token: string) {
   });
 
   // 🔄 Live Instructor Code Broadcasting (synchronizes to Redux + all registered component callbacks)
-  socket.on("receive-code", (data: { code: string; from: string }) => {
-    console.log("Socket received live code update:", data?.code?.length, "chars from", data?.from);
+  socket.on("receive-code", (data: { code: string; language?: string; from: string }) => {
+    console.log("Socket received live code update:", data?.code?.length, "chars, language:", data?.language, "from", data?.from);
     if (typeof data?.code === "string") {
-      store.dispatch(setMeetingInfo({ code: data.code }));
+      store.dispatch(setMeetingInfo({ code: data.code, language: data.language }));
     }
     adminCodeListeners.forEach((cb) => {
       try {
@@ -152,12 +154,13 @@ export function connectSocket(token: string) {
 
   socket.on(
     "sync-admin-state",
-    (data: { code?: string; output?: OutputEntry[]; adminName?: string }) => {
+    (data: { code?: string; language?: string; output?: OutputEntry[]; adminName?: string }) => {
       console.log("Socket received sync-admin-state:", data);
-      if (data?.code || data?.output) {
+      if (data?.code || data?.output || data?.language) {
         store.dispatch(
           setMeetingInfo({
             code: data.code,
+            language: data.language,
             output: data.output,
             adminName: data.adminName,
           })
@@ -194,6 +197,24 @@ export function connectSocket(token: string) {
         error: message || error || "Failed to retrieve student code.",
       })
     );
+  });
+
+  socket.on("receive-chat-message", (message: ChatMessage) => {
+    console.log("Socket received chat message from:", message?.senderName, message?.message);
+    const state = store.getState() as unknown as {
+      meeting?: { currentUser?: { id?: string } };
+      user?: { user?: { _id?: string; id?: string } | null };
+    };
+    const currentUserId = state?.meeting?.currentUser?.id || state?.user?.user?._id || state?.user?.user?.id;
+    store.dispatch(addChatMessage({ ...message, currentUserId }));
+
+    chatMessageListeners.forEach((cb) => {
+      try {
+        cb(message);
+      } catch (err) {
+        console.error("[socketService] error in chatMessageListener:", err);
+      }
+    });
   });
 
   return socket;
@@ -236,14 +257,15 @@ export function getSocketInstance(): Socket | null {
   return socket;
 }
 
-export function sendAdminCode(meetingId: string, code: string) {
+export function sendAdminCode(meetingId: string, code: string, language?: string) {
   if (!socket?.connected) {
-    pendingAdminCodeEmit = { meetingId, code };
+    pendingAdminCodeEmit = { meetingId, code, language };
     return;
   }
   const eventId = `code_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
   socket.emit("send-code", {
     code,
+    language,
     meetingId,
     eventId,
     clientTimestamp: Date.now(),
@@ -271,7 +293,7 @@ export function requestAdminState(meetingId: string) {
   }
 }
 
-export function onReceiveAdminCode(callback: (data: { code: string; from: string }) => void) {
+export function onReceiveAdminCode(callback: (data: { code: string; language?: string; from: string }) => void) {
   adminCodeListeners.add(callback);
   return () => {
     adminCodeListeners.delete(callback);
@@ -286,7 +308,7 @@ export function onReceiveAdminOutput(callback: (data: { output: OutputEntry[]; f
 }
 
 export function onSyncAdminState(
-  callback: (data: { code?: string; output?: OutputEntry[]; adminName?: string }) => void
+  callback: (data: { code?: string; language?: string; output?: OutputEntry[]; adminName?: string }) => void
 ) {
   adminStateSyncListeners.add(callback);
   return () => {
@@ -318,5 +340,44 @@ export function emitLeaveMeeting(meetingId: string): Promise<boolean> {
 export function disconnectSocket() {
   socket?.disconnect();
   socket = null;
+  store.dispatch(resetChat());
 }
+
+export function emitChatMessage(
+  meetingId: string,
+  message: string,
+  extra?: Partial<ChatMessage>
+): Promise<ChatMessage> {
+  return new Promise((resolve, reject) => {
+    if (!socket || !socket.connected) {
+      reject(new Error("Socket is not connected."));
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      reject(new Error("Chat message delivery timed out."));
+    }, 5000);
+
+    socket.emit(
+      "send-chat-message",
+      { meetingId, message, ...extra },
+      (response: { ok: boolean; message?: ChatMessage; error?: string }) => {
+        clearTimeout(timer);
+        if (response?.ok && response?.message) {
+          resolve(response.message);
+        } else {
+          reject(new Error(response?.error || "Failed to send chat message."));
+        }
+      }
+    );
+  });
+}
+
+export function addChatMessageListener(callback: (message: ChatMessage) => void) {
+  chatMessageListeners.add(callback);
+  return () => {
+    chatMessageListeners.delete(callback);
+  };
+}
+
 
