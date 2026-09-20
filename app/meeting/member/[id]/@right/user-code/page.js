@@ -41,6 +41,7 @@ const Code = () => {
   const { id } = useParams();
 
   const reduxUser = useSelector((state) => state.meeting?.currentUser);
+  const viewMode = useSelector((state) => state.meeting?.viewMode);
   const currentUser = useMemo(() => {
     if (reduxUser) return reduxUser;
     if (typeof window !== "undefined") {
@@ -53,6 +54,18 @@ const Code = () => {
   const isHost = currentUser?.isHost || currentUser?.role === "teacher";
   const studentId = currentUser?.id || "student_guest";
   const studentName = currentUser?.username || "Student";
+
+  // Trigger Monaco relayout whenever view mode changes (LEFT, BOTH, RIGHT)
+  useEffect(() => {
+    if (editorInstanceRef.current) {
+      editorInstanceRef.current.layout();
+    }
+    const timer = setTimeout(() => {
+      editorInstanceRef.current?.layout();
+      window.dispatchEvent(new Event("resize"));
+    }, 100);
+    return () => clearTimeout(timer);
+  }, [viewMode]);
 
   // Keep selectedLanguageRef updated
   useEffect(() => {
@@ -285,7 +298,7 @@ print(add(2, 3))
 
   return (
     <Split
-      className="h-full w-full overflow-hidden"
+      className="h-full w-full overflow-hidden flex flex-col"
       sizes={[75, 25]}
       minSize={[200, 38]}
       expandToMin={false}
@@ -297,16 +310,8 @@ print(add(2, 3))
       cursor="row-resize"
     >
       {/* Code section */}
-      <div className="bg-[#262626] h-full rounded-b-lg border-x-[0.5px] border-b-[0.5px] border-zinc-600 flex flex-col">
-        <div className="border-b-[0.5px] border-zinc-600 w-full h-8 flex items-center justify-between px-2 relative">
-          <div className="flex items-center">
-            <LanguageSelector
-              value={selectedLanguage}
-              onChange={handleLanguageChange}
-              align="right"
-            />
-          </div>
-
+      <div className="bg-[#262626] h-full rounded-b-lg border-x-[0.5px] border-b-[0.5px] border-zinc-600 flex flex-col min-h-0 overflow-hidden">
+        <div className="border-b-[0.5px] border-zinc-600 w-full h-8 flex items-center justify-between px-2 relative shrink-0">
           <div className="flex items-center gap-1">
             <button
               type="button"
@@ -334,21 +339,31 @@ print(add(2, 3))
             </div>
           </div>
 
+          <div className="flex items-center">
+            <LanguageSelector
+              value={selectedLanguage}
+              onChange={handleLanguageChange}
+              align="right"
+            />
+          </div>
+
           {formatNotice && (
             <div className="absolute top-9 right-2 z-40 bg-zinc-800 border border-zinc-600/80 text-zinc-200 text-xs px-2.5 py-1 rounded shadow-xl whitespace-nowrap animate-in fade-in">
               {formatNotice}
             </div>
           )}
         </div>
-        <div className="flex-1 min-h-0">
+        <div className="flex-1 min-h-0 w-full relative">
           <Editor
             height="100%"
+            width="100%"
             language={selectedLangConfig.monacoLanguage}
             defaultValue="// write code there"
             theme="custom-bg"
             beforeMount={beforeMount}
             value={Code}
             options={{
+              automaticLayout: true,
               fontSize: 14,
               fontFamily: "JetBrains Mono, monospace",
               lineHeight: 22,
@@ -380,7 +395,7 @@ print(add(2, 3))
         </div>
       </div>
       {/* Output section */}
-      <div className="bg-[#262626] rounded-lg border-[0.5px] border-zinc-600 flex flex-col h-full min-h-10">
+      <div className="bg-[#262626] rounded-lg border-[0.5px] border-zinc-600 flex flex-col h-full min-h-0 overflow-hidden">
         <div className="w-full h-9 shrink-0 bg-[#333333] justify-between rounded-t-lg p-1 flex items-center gap-1 overflow-x-scroll no-scrollbar text-zinc-400">
           <div
             className={`flex gap-2 items-center text-sm hover:bg-zinc-700 px-3 h-full rounded-sm cursor-pointer`}

@@ -23,7 +23,7 @@ export default async function Layout({
   return (
     <div className="w-screen h-screen flex flex-col p-2 bg-[#0f0f0f] overflow-hidden">
       {/* Top Header Bar */}
-      <div className="w-full h-10 flex items-center justify-between px-1">
+      <div className="w-full h-10 flex items-center justify-between px-1 shrink-0">
         {/* Left Side: Leave Meeting button immediately to the left of TV/admin section */}
         <div className="flex items-center gap-2.5">
           <LeaveMeetingButton />
@@ -39,12 +39,12 @@ export default async function Layout({
         </div>
       </div>
 
-      <div className="flex-1 overflow-hidden">
+      <div className="flex-1 min-h-0 w-full h-full overflow-hidden flex flex-col">
         <Base left={left} right={right} />
       </div>
-      <div className="fixed bottom-3 right-2 rounded-lg border-[0.5px]  border-zinc-600 flex">
+      {/* <div className="fixed bottom-3 right-2 rounded-lg border-[0.5px]  border-zinc-600 flex">
         <Controles />
-      </div>
+      </div> */}
     </div>
   );
 }

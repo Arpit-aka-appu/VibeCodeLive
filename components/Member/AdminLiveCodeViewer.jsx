@@ -28,6 +28,7 @@ const AdminLiveCodeViewer = () => {
   const connectionStatus = useSelector(
     (state) => state.meeting.connectionStatus
   );
+  const viewMode = useSelector((state) => state.meeting?.viewMode);
 
   const meetingId = meetingIdFromState || params?.id;
   const isConnected = connectionStatus === "connected";
@@ -83,6 +84,18 @@ const AdminLiveCodeViewer = () => {
       }
     }
   }, [adminCode]);
+
+  // Trigger Monaco relayout whenever view mode changes (LEFT, BOTH, RIGHT)
+  useEffect(() => {
+    if (editorRef.current) {
+      editorRef.current.layout();
+    }
+    const timer = setTimeout(() => {
+      editorRef.current?.layout();
+      window.dispatchEvent(new Event("resize"));
+    }, 100);
+    return () => clearTimeout(timer);
+  }, [viewMode]);
 
   // Fetch meeting code and language from DB on mount as initial fallback
   useEffect(() => {
@@ -195,9 +208,9 @@ const AdminLiveCodeViewer = () => {
       cursor="row-resize"
     >
       {/* Top Half: Read-only Monaco Editor of Instructor's Live Code */}
-      <div className="bg-[#262626] h-full rounded-b-lg border-x-[0.5px] border-b-[0.5px] border-zinc-600 flex flex-col overflow-hidden">
+      <div className="bg-[#262626] h-full rounded-b-lg border-x-[0.5px] border-b-[0.5px] border-zinc-600 flex flex-col overflow-hidden min-h-0">
         {/* Sub-header Bar */}
-        <div className="border-b-[0.5px] border-zinc-600 w-full h-8 flex items-center justify-between px-2 bg-[#2a2a2a]">
+        <div className="border-b-[0.5px] border-zinc-600 w-full h-8 flex items-center justify-between px-2 bg-[#2a2a2a] shrink-0">
           <div className="flex items-center gap-2 min-w-0">
             <div className="flex items-center gap-1 text-xs font-semibold text-zinc-200">
               <LuCrown className="text-amber-400 text-sm shrink-0" />
@@ -266,15 +279,17 @@ const AdminLiveCodeViewer = () => {
         </div>
 
         {/* Monaco Editor (Read-Only) */}
-        <div className="flex-1 min-h-0">
+        <div className="flex-1 min-h-0 w-full relative">
           <Editor
             height="100%"
+            width="100%"
             language={adminLangConfig.monacoLanguage}
             theme="custom-bg"
             beforeMount={beforeMount}
             onMount={handleEditorMount}
             value={adminCode}
             options={{
+              automaticLayout: true,
               readOnly: true,
               domReadOnly: true,
               fontSize: 14,
@@ -297,7 +312,7 @@ const AdminLiveCodeViewer = () => {
       </div>
 
       {/* Bottom Half: Instructor's Live Console Output */}
-      <div className="bg-[#262626] rounded-lg border-[0.5px] border-zinc-600 flex flex-col h-full min-h-10 overflow-hidden">
+      <div className="bg-[#262626] rounded-lg border-[0.5px] border-zinc-600 flex flex-col h-full min-h-0 overflow-hidden">
         <div className="w-full h-9 shrink-0 bg-[#333333] px-2 flex items-center justify-between border-b-[0.5px] border-zinc-600 text-zinc-400">
           <div className="flex items-center gap-2 text-xs font-semibold text-zinc-200">
             <BsFileCode className="text-blue-400 text-sm" />

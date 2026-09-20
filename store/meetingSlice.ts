@@ -3,10 +3,9 @@ import {
   CurrentUser,
   MeetingInfo,
   MeetingState,
-  Participant,
-  StudentCodeSnapshot,
   StudentCodeTabsState,
   MAX_STUDENT_TABS,
+  ViewMode,
 } from "./types";
 
 const initialStudentCodeTabs: StudentCodeTabsState = {
@@ -22,6 +21,7 @@ const initialState: MeetingState = {
   adminName: null,
   meetingInfo: null,
   currentUser: null,
+  viewMode: "both",
   connectionStatus: "disconnected",
   participants: {
     byId: {},
@@ -34,6 +34,10 @@ const meetingSlice = createSlice({
   name: "meeting",
   initialState,
   reducers: {
+    setViewMode(state, action: PayloadAction<ViewMode>) {
+      state.viewMode = action.payload;
+    },
+
     setMeetingId(state, action: PayloadAction<string>) {
       state.meetingId = action.payload;
     },
@@ -267,6 +271,7 @@ const meetingSlice = createSlice({
       state.meetingId = null;
       state.adminName = null;
       state.meetingInfo = null;
+      state.viewMode = "both";
       state.participants = { byId: {}, allIds: [] };
       state.connectionStatus = "disconnected";
       state.studentCodeTabs = {
@@ -281,6 +286,7 @@ const meetingSlice = createSlice({
 });
 
 export const {
+  setViewMode,
   setMeetingId,
   setAdminName,
   setMeetingInfo,
