@@ -32,6 +32,23 @@ export function parseTokenPayload(token: string) {
 
 let socket: Socket | null = null;
 
+export type OutputEntry = {
+  Data: string;
+  time: string;
+  type: string;
+};
+
+// Persistent listener sets that survive component mount ordering and reconnections
+const adminCodeListeners = new Set<(data: { code: string; from: string }) => void>();
+const adminOutputListeners = new Set<(data: { output: OutputEntry[]; from: string }) => void>();
+const adminStateSyncListeners = new Set<
+  (data: { code?: string; output?: OutputEntry[]; adminName?: string }) => void
+>();
+
+let pendingMeetingIdStateRequest: string | null = null;
+let pendingAdminCodeEmit: { meetingId: string; code: string } | null = null;
+let pendingAdminOutputEmit: { meetingId: string; output: OutputEntry[] } | null = null;
+
 export function connectSocket(token: string) {
   if (token) {
     const payload = parseTokenPayload(token);
@@ -66,6 +83,17 @@ export function connectSocket(token: string) {
 
   socket.on("connect", () => {
     store.dispatch(setConnectionStatus("connected"));
+    if (pendingMeetingIdStateRequest) {
+      socket?.emit("get-admin-state", { meetingId: pendingMeetingIdStateRequest });
+    }
+    if (pendingAdminCodeEmit) {
+      sendAdminCode(pendingAdminCodeEmit.meetingId, pendingAdminCodeEmit.code);
+      pendingAdminCodeEmit = null;
+    }
+    if (pendingAdminOutputEmit) {
+      sendAdminOutput(pendingAdminOutputEmit.meetingId, pendingAdminOutputEmit.output);
+      pendingAdminOutputEmit = null;
+    }
   });
 
   socket.on("disconnect", () => {
@@ -93,6 +121,58 @@ export function connectSocket(token: string) {
     }
   });
 
+  // 🔄 Live Instructor Code Broadcasting (synchronizes to Redux + all registered component callbacks)
+  socket.on("receive-code", (data: { code: string; from: string }) => {
+    console.log("Socket received live code update:", data?.code?.length, "chars from", data?.from);
+    if (typeof data?.code === "string") {
+      store.dispatch(setMeetingInfo({ code: data.code }));
+    }
+    adminCodeListeners.forEach((cb) => {
+      try {
+        cb(data);
+      } catch (err) {
+        console.error("[socketService] error in adminCodeListener:", err);
+      }
+    });
+  });
+
+  socket.on("receive-admin-output", (data: { output: OutputEntry[]; from: string }) => {
+    console.log("Socket received live output update:", data?.output?.length, "entries from", data?.from);
+    if (Array.isArray(data?.output)) {
+      store.dispatch(setMeetingInfo({ output: data.output }));
+    }
+    adminOutputListeners.forEach((cb) => {
+      try {
+        cb(data);
+      } catch (err) {
+        console.error("[socketService] error in adminOutputListener:", err);
+      }
+    });
+  });
+
+  socket.on(
+    "sync-admin-state",
+    (data: { code?: string; output?: OutputEntry[]; adminName?: string }) => {
+      console.log("Socket received sync-admin-state:", data);
+      if (data?.code || data?.output) {
+        store.dispatch(
+          setMeetingInfo({
+            code: data.code,
+            output: data.output,
+            adminName: data.adminName,
+          })
+        );
+      }
+      adminStateSyncListeners.forEach((cb) => {
+        try {
+          cb(data);
+        } catch (err) {
+          console.error("[socketService] error in adminStateSyncListener:", err);
+        }
+      });
+    }
+  );
+
   socket.on("receive-student-code", ({ requestId, studentId, studentName, code, language, timestamp }) => {
     console.log("Received student code snapshot:", studentId, requestId);
     store.dispatch(
@@ -106,7 +186,7 @@ export function connectSocket(token: string) {
     );
   });
 
-  socket.on("student-code-error", ({ requestId, studentId, error, message }) => {
+  socket.on("student-code-error", ({ studentId, error, message }) => {
     console.warn("Student code error:", studentId, error, message);
     store.dispatch(
       receiveStudentCodeError({
@@ -123,7 +203,7 @@ export function joinMeeting(meetingId: string) {
   socket?.emit("join-meeting", { meetingId });
 }
 
-export function sendCodeSnapshot(meetingId: string, snapshot: any) {
+export function sendCodeSnapshot(meetingId: string, snapshot: unknown) {
   console.log("Sending code snapshot for meeting", meetingId, ":", snapshot);
   socket?.emit("code-snapshot", { meetingId, snapshot });
 }
@@ -157,8 +237,12 @@ export function getSocketInstance(): Socket | null {
 }
 
 export function sendAdminCode(meetingId: string, code: string) {
+  if (!socket?.connected) {
+    pendingAdminCodeEmit = { meetingId, code };
+    return;
+  }
   const eventId = `code_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
-  socket?.emit("send-code", {
+  socket.emit("send-code", {
     code,
     meetingId,
     eventId,
@@ -166,9 +250,13 @@ export function sendAdminCode(meetingId: string, code: string) {
   });
 }
 
-export function sendAdminOutput(meetingId: string, output: any[]) {
+export function sendAdminOutput(meetingId: string, output: OutputEntry[]) {
+  if (!socket?.connected) {
+    pendingAdminOutputEmit = { meetingId, output };
+    return;
+  }
   const eventId = `out_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
-  socket?.emit("send-admin-output", {
+  socket.emit("send-admin-output", {
     output,
     meetingId,
     eventId,
@@ -177,29 +265,32 @@ export function sendAdminOutput(meetingId: string, output: any[]) {
 }
 
 export function requestAdminState(meetingId: string) {
-  socket?.emit("get-admin-state", { meetingId });
+  pendingMeetingIdStateRequest = meetingId;
+  if (socket?.connected) {
+    socket.emit("get-admin-state", { meetingId });
+  }
 }
 
 export function onReceiveAdminCode(callback: (data: { code: string; from: string }) => void) {
-  socket?.on("receive-code", callback);
+  adminCodeListeners.add(callback);
   return () => {
-    socket?.off("receive-code", callback);
+    adminCodeListeners.delete(callback);
   };
 }
 
-export function onReceiveAdminOutput(callback: (data: { output: any[]; from: string }) => void) {
-  socket?.on("receive-admin-output", callback);
+export function onReceiveAdminOutput(callback: (data: { output: OutputEntry[]; from: string }) => void) {
+  adminOutputListeners.add(callback);
   return () => {
-    socket?.off("receive-admin-output", callback);
+    adminOutputListeners.delete(callback);
   };
 }
 
 export function onSyncAdminState(
-  callback: (data: { code?: string; output?: any[]; adminName?: string }) => void
+  callback: (data: { code?: string; output?: OutputEntry[]; adminName?: string }) => void
 ) {
-  socket?.on("sync-admin-state", callback);
+  adminStateSyncListeners.add(callback);
   return () => {
-    socket?.off("sync-admin-state", callback);
+    adminStateSyncListeners.delete(callback);
   };
 }
 

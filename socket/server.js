@@ -152,7 +152,10 @@ io.on("connection", (socket) => {
     }
 
     // ⚡ Send cached admin code and output to joining user immediately
-    const cachedState = roomAdminState.get(meetingId) || (socket.data?.meetingUrl ? roomAdminState.get(socket.data.meetingUrl) : null);
+    const cachedState =
+      roomAdminState.get(meetingId) ||
+      (socket.data?.meetingUrl ? roomAdminState.get(socket.data.meetingUrl) : null) ||
+      (socket.data?.meetingId ? roomAdminState.get(String(socket.data.meetingId)) : null);
     if (cachedState) {
       socket.emit("sync-admin-state", cachedState);
     }
@@ -187,44 +190,65 @@ io.on("connection", (socket) => {
   socket.on("send-code", ({ code, meetingId, eventId, clientTimestamp }) => {
     console.log(`Code update in : ${code} from ${socket.data.username} and meetingId: ${meetingId}`);
 
-    if (meetingId) {
-      const prev = roomAdminState.get(meetingId) || {};
-      roomAdminState.set(meetingId, {
+    const targetRooms = new Set();
+    if (meetingId) targetRooms.add(meetingId);
+    if (socket.data?.meetingUrl) targetRooms.add(socket.data.meetingUrl);
+    if (socket.data?.meetingId) targetRooms.add(String(socket.data.meetingId));
+
+    for (const roomKey of targetRooms) {
+      const prev = roomAdminState.get(roomKey) || {};
+      roomAdminState.set(roomKey, {
         ...prev,
         code,
-        adminName: socket.data.username,
+        adminName: socket.data?.username || socket.data?.userId,
         timestamp: Date.now(),
       });
     }
 
-    io.to(meetingId).emit("receive-code", {
+    let broadcast = io;
+    for (const roomKey of targetRooms) {
+      broadcast = broadcast.to(roomKey);
+    }
+    broadcast.emit("receive-code", {
       code,
-      from: socket.data.username,
+      from: socket.data?.username || socket.data?.userId,
       eventId,
       clientTimestamp,
     });
   });
 
   socket.on("send-admin-output", ({ output, meetingId, eventId, clientTimestamp }) => {
-    if (meetingId) {
-      const prev = roomAdminState.get(meetingId) || {};
-      roomAdminState.set(meetingId, {
+    const targetRooms = new Set();
+    if (meetingId) targetRooms.add(meetingId);
+    if (socket.data?.meetingUrl) targetRooms.add(socket.data.meetingUrl);
+    if (socket.data?.meetingId) targetRooms.add(String(socket.data.meetingId));
+
+    for (const roomKey of targetRooms) {
+      const prev = roomAdminState.get(roomKey) || {};
+      roomAdminState.set(roomKey, {
         ...prev,
         output,
         timestamp: Date.now(),
       });
     }
 
-    io.to(meetingId).emit("receive-admin-output", {
+    let broadcast = io;
+    for (const roomKey of targetRooms) {
+      broadcast = broadcast.to(roomKey);
+    }
+    broadcast.emit("receive-admin-output", {
       output,
-      from: socket.data.username,
+      from: socket.data?.username || socket.data?.userId,
       eventId,
       clientTimestamp,
     });
   });
 
   socket.on("get-admin-state", ({ meetingId }) => {
-    const cached = roomAdminState.get(meetingId);
+    const cached =
+      roomAdminState.get(meetingId) ||
+      (socket.data?.meetingUrl ? roomAdminState.get(socket.data.meetingUrl) : null) ||
+      (socket.data?.meetingId ? roomAdminState.get(String(socket.data.meetingId)) : null);
     if (cached) {
       socket.emit("sync-admin-state", cached);
     }

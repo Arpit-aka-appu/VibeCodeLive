@@ -1,5 +1,5 @@
 "use client";
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import Split from "react-split";
 import Editor from "@monaco-editor/react";
 import { useSelector } from "react-redux";
@@ -37,41 +37,59 @@ const AdminLiveCodeViewer = () => {
   const meetingId = meetingIdFromState || params?.id;
   const isConnected = connectionStatus === "connected";
 
-  const [adminCode, setAdminCode] = useState(
-    meetingInfo?.code || DEFAULT_STARTER_CODE
-  );
-  const [adminOutput, setAdminOutput] = useState(
-    meetingInfo?.output?.length
-      ? meetingInfo.output
-      : [
-          {
-            Data: "Hello from Instructor!",
-            time: new Date().toLocaleTimeString(),
-            type: "success",
-          },
-        ]
-  );
+  const [localAdminCode, setLocalAdminCode] = useState(null);
+  const [localAdminOutput, setLocalAdminOutput] = useState(null);
   const [copied, setCopied] = useState(false);
   const [lastSyncTime, setLastSyncTime] = useState(null);
 
+  const adminCode =
+    localAdminCode !== null
+      ? localAdminCode
+      : (typeof meetingInfo?.code === "string" ? meetingInfo.code : DEFAULT_STARTER_CODE);
+
+  const adminOutput = useMemo(() => {
+    if (localAdminOutput !== null) return localAdminOutput;
+    if (Array.isArray(meetingInfo?.output) && meetingInfo.output.length > 0) {
+      return meetingInfo.output;
+    }
+    return [
+      {
+        Data: "Hello from Instructor!",
+        time: new Date().toLocaleTimeString(),
+        type: "success",
+      },
+    ];
+  }, [localAdminOutput, meetingInfo?.output]);
+
   const outputRef = useRef(null);
+  const editorRef = useRef(null);
+  const hasReceivedLiveCode = useRef(false);
 
-  // Sync with Redux meetingInfo when updated
+  const handleEditorMount = (editor) => {
+    editorRef.current = editor;
+    if (typeof adminCode === "string" && editor.getValue() !== adminCode) {
+      editor.setValue(adminCode);
+    }
+  };
+
+  // Explicitly update Monaco editor model when adminCode changes (necessary for readOnly editors)
   useEffect(() => {
-    if (meetingInfo?.code) {
-      setAdminCode(meetingInfo.code);
+    if (editorRef.current && typeof adminCode === "string") {
+      const currentVal = editorRef.current.getValue();
+      if (currentVal !== adminCode) {
+        editorRef.current.setValue(adminCode);
+      }
     }
-    if (meetingInfo?.output?.length) {
-      setAdminOutput(meetingInfo.output);
-    }
-  }, [meetingInfo]);
+  }, [adminCode]);
 
-  // Fetch meeting code from DB on mount
+  // Fetch meeting code from DB on mount as initial fallback
   useEffect(() => {
     if (meetingId) {
       fetchMeetingDetails(meetingId).then((m) => {
-        if (m?.code) setAdminCode(m.code);
-        if (m?.output?.length) setAdminOutput(m.output);
+        if (!hasReceivedLiveCode.current) {
+          if (typeof m?.code === "string") setLocalAdminCode(m.code);
+          if (Array.isArray(m?.output) && m.output.length > 0) setLocalAdminOutput(m.output);
+        }
       });
     }
   }, [meetingId]);
@@ -98,7 +116,8 @@ const AdminLiveCodeViewer = () => {
     // 2. Real-time code updates from instructor
     const unsubCode = onReceiveAdminCode(({ code }) => {
       if (typeof code === "string") {
-        setAdminCode(code);
+        hasReceivedLiveCode.current = true;
+        setLocalAdminCode(code);
         setLastSyncTime(new Date().toLocaleTimeString());
       }
     });
@@ -106,7 +125,7 @@ const AdminLiveCodeViewer = () => {
     // 3. Real-time output updates when instructor runs code
     const unsubOutput = onReceiveAdminOutput(({ output }) => {
       if (Array.isArray(output)) {
-        setAdminOutput(output);
+        setLocalAdminOutput(output);
       }
     });
 
@@ -114,10 +133,11 @@ const AdminLiveCodeViewer = () => {
     const unsubSync = onSyncAdminState((state) => {
       if (state) {
         if (typeof state.code === "string" && state.code) {
-          setAdminCode(state.code);
+          hasReceivedLiveCode.current = true;
+          setLocalAdminCode(state.code);
         }
         if (Array.isArray(state.output)) {
-          setAdminOutput(state.output);
+          setLocalAdminOutput(state.output);
         }
         setLastSyncTime(new Date().toLocaleTimeString());
       }
@@ -236,6 +256,7 @@ const AdminLiveCodeViewer = () => {
             defaultLanguage="javascript"
             theme="custom-bg"
             beforeMount={beforeMount}
+            onMount={handleEditorMount}
             value={adminCode}
             options={{
               readOnly: true,

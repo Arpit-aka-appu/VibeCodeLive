@@ -59,7 +59,10 @@ export default function registerMeetingHandlers({ io, socket }) {
     }
 
     // ⚡ Send cached admin code and output to joining user immediately
-    const cachedState = roomAdminState.get(meetingId) || (socket.user?.meetingUrl ? roomAdminState.get(socket.user.meetingUrl) : null);
+    const cachedState =
+      roomAdminState.get(meetingId) ||
+      (socket.user?.meetingUrl ? roomAdminState.get(socket.user.meetingUrl) : null) ||
+      (socket.user?.meetingId ? roomAdminState.get(String(socket.user.meetingId)) : null);
     if (cachedState) {
       socket.emit("sync-admin-state", cachedState);
     }
@@ -120,9 +123,14 @@ export default function registerMeetingHandlers({ io, socket }) {
   });
 
   socket.on("send-code", ({ code, meetingId, eventId, clientTimestamp }) => {
-    if (meetingId) {
-      const prev = roomAdminState.get(meetingId) || {};
-      roomAdminState.set(meetingId, {
+    const targetRooms = new Set();
+    if (meetingId) targetRooms.add(meetingId);
+    if (socket.user?.meetingUrl) targetRooms.add(socket.user.meetingUrl);
+    if (socket.user?.meetingId) targetRooms.add(String(socket.user.meetingId));
+
+    for (const roomKey of targetRooms) {
+      const prev = roomAdminState.get(roomKey) || {};
+      roomAdminState.set(roomKey, {
         ...prev,
         code,
         adminName: socket.user?.username || socket.user?.id,
@@ -130,7 +138,11 @@ export default function registerMeetingHandlers({ io, socket }) {
       });
     }
 
-    io.to(meetingId).emit("receive-code", {
+    let broadcast = io;
+    for (const roomKey of targetRooms) {
+      broadcast = broadcast.to(roomKey);
+    }
+    broadcast.emit("receive-code", {
       code,
       from: socket.user?.username || socket.user?.id,
       eventId,
@@ -139,16 +151,25 @@ export default function registerMeetingHandlers({ io, socket }) {
   });
 
   socket.on("send-admin-output", ({ output, meetingId, eventId, clientTimestamp }) => {
-    if (meetingId) {
-      const prev = roomAdminState.get(meetingId) || {};
-      roomAdminState.set(meetingId, {
+    const targetRooms = new Set();
+    if (meetingId) targetRooms.add(meetingId);
+    if (socket.user?.meetingUrl) targetRooms.add(socket.user.meetingUrl);
+    if (socket.user?.meetingId) targetRooms.add(String(socket.user.meetingId));
+
+    for (const roomKey of targetRooms) {
+      const prev = roomAdminState.get(roomKey) || {};
+      roomAdminState.set(roomKey, {
         ...prev,
         output,
         timestamp: Date.now(),
       });
     }
 
-    io.to(meetingId).emit("receive-admin-output", {
+    let broadcast = io;
+    for (const roomKey of targetRooms) {
+      broadcast = broadcast.to(roomKey);
+    }
+    broadcast.emit("receive-admin-output", {
       output,
       from: socket.user?.username || socket.user?.id,
       eventId,
@@ -157,7 +178,10 @@ export default function registerMeetingHandlers({ io, socket }) {
   });
 
   socket.on("get-admin-state", ({ meetingId }) => {
-    const cached = roomAdminState.get(meetingId);
+    const cached =
+      roomAdminState.get(meetingId) ||
+      (socket.user?.meetingUrl ? roomAdminState.get(socket.user.meetingUrl) : null) ||
+      (socket.user?.meetingId ? roomAdminState.get(String(socket.user.meetingId)) : null);
     if (cached) {
       socket.emit("sync-admin-state", cached);
     }

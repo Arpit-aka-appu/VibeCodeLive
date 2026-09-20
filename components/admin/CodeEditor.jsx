@@ -2,7 +2,7 @@
 import Split from "react-split";
 import { BsFileCode } from "react-icons/bs";
 import Editor from "@monaco-editor/react";
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { useParams } from "next/navigation";
 import { useSelector } from "react-redux";
 import { beforeMount } from "@/utils/Editor_Customization";
@@ -13,43 +13,90 @@ import { sendAdminCode, sendAdminOutput, getSocketInstance } from "@/lib/socketS
 import { saveMeetingCode } from "@/lib/meetingApi";
 
 const Code = () => {
-  const [Code, setCode] = useState("// Write JavaScript code here\nconsole.log('Hello from Instructor!');\n");
-  const [Output, setOutput] = useState([]);
-  const [CodeCompiling, setCodeCompiling] = useState(false);
-
-  const outputRef = useRef(null);
-  const debounceTimerRef = useRef(null);
-  const editorRef = useRef(null);
-
   const params = useParams();
+  const meetingInfo = useSelector((state) => state.meeting.meetingInfo);
   const meetingIdFromState = useSelector((state) => state.meeting.meetingId);
   const meetingId = meetingIdFromState || params?.id;
 
-  // Debounced real-time broadcast and DB persist of admin code as they type
+  const [editedCode, setEditedCode] = useState(null);
+  const Code =
+    editedCode !== null
+      ? editedCode
+      : (typeof meetingInfo?.code === "string"
+          ? meetingInfo.code
+          : "// Write JavaScript code here\nconsole.log('Hello from Instructor!');\n");
+
+  const [localOutput, setLocalOutput] = useState(null);
+  const Output = useMemo(() => {
+    if (localOutput !== null) return localOutput;
+    if (Array.isArray(meetingInfo?.output)) return meetingInfo.output;
+    return [];
+  }, [localOutput, meetingInfo?.output]);
+
+  const [CodeCompiling, setCodeCompiling] = useState(false);
+
+  const outputRef = useRef(null);
+  const outputHistoryRef = useRef(Output);
+  const codeRef = useRef(Code);
+  const hasUserEdited = useRef(false);
+  const syncTimerRef = useRef(null);
+  const dbSaveTimerRef = useRef(null);
+  const editorRef = useRef(null);
+
+  useEffect(() => {
+    outputHistoryRef.current = Output;
+  }, [Output]);
+
+  useEffect(() => {
+    codeRef.current = Code;
+  }, [Code]);
+
+  // Synchronize Monaco editor instance if DB meeting code arrives before instructor started typing
+  useEffect(() => {
+    if (editedCode === null && typeof meetingInfo?.code === "string") {
+      codeRef.current = meetingInfo.code;
+      if (editorRef.current && editorRef.current.getValue() !== meetingInfo.code) {
+        editorRef.current.setValue(meetingInfo.code);
+      }
+    }
+  }, [meetingInfo?.code, editedCode]);
+
+  // Fast socket broadcast (60ms) decoupled from slower DB persistence (1500ms)
   const broadcastCode = useCallback(
     (newCode) => {
       if (!meetingId) return;
-      if (debounceTimerRef.current) {
-        clearTimeout(debounceTimerRef.current);
+
+      // 1. Fast socket broadcast to classroom
+      if (syncTimerRef.current) {
+        clearTimeout(syncTimerRef.current);
       }
-      debounceTimerRef.current = setTimeout(() => {
+      syncTimerRef.current = setTimeout(() => {
         sendAdminCode(meetingId, newCode);
-        saveMeetingCode(meetingId, newCode, Output);
-      }, 150);
+      }, 60);
+
+      // 2. Throttled DB persist (saves to MongoDB without spamming HTTP requests)
+      if (dbSaveTimerRef.current) {
+        clearTimeout(dbSaveTimerRef.current);
+      }
+      dbSaveTimerRef.current = setTimeout(() => {
+        saveMeetingCode(meetingId, newCode, outputHistoryRef.current);
+      }, 1500);
     },
-    [meetingId, Output]
+    [meetingId]
   );
 
-  // Send and save initial code when meetingId or socket connection is established
+  // Send initial code when meetingId or socket connection is established
   useEffect(() => {
     if (!meetingId) return;
-    sendAdminCode(meetingId, Code);
-    saveMeetingCode(meetingId, Code, Output);
+    sendAdminCode(meetingId, codeRef.current);
 
     const socket = getSocketInstance();
     if (socket) {
       const onConnect = () => {
-        sendAdminCode(meetingId, Code);
+        sendAdminCode(meetingId, codeRef.current);
+        if (outputHistoryRef.current?.length > 0) {
+          sendAdminOutput(meetingId, outputHistoryRef.current);
+        }
       };
       socket.on("connect", onConnect);
       return () => socket.off("connect", onConnect);
@@ -93,8 +140,9 @@ const Code = () => {
         type: result.stderr || result.compile_output ? "error" : "success",
       };
 
-      setOutput((prev) => {
-        const updated = [...prev, outputItem];
+      setLocalOutput((prev) => {
+        const base = prev ?? Output;
+        const updated = [...base, outputItem];
         if (meetingId) {
           sendAdminOutput(meetingId, updated);
         }
@@ -107,8 +155,9 @@ const Code = () => {
         time: new Date().toLocaleTimeString(),
         type: "error",
       };
-      setOutput((prev) => {
-        const updated = [...prev, errorItem];
+      setLocalOutput((prev) => {
+        const base = prev ?? Output;
+        const updated = [...base, errorItem];
         if (meetingId) {
           sendAdminOutput(meetingId, updated);
         }
@@ -118,7 +167,7 @@ const Code = () => {
   };
 
   const handleClearOutput = () => {
-    setOutput([]);
+    setLocalOutput([]);
     if (meetingId) {
       sendAdminOutput(meetingId, []);
     }
@@ -130,6 +179,13 @@ const Code = () => {
 
   const handleFormatCode = () => {
     editorRef.current?.getAction("editor.action.formatDocument")?.run();
+  };
+
+  const handleSaveCode = () => {
+    if (meetingId) {
+      saveMeetingCode(meetingId, Code, Output);
+      sendAdminCode(meetingId, Code);
+    }
   };
 
   return (
@@ -171,6 +227,7 @@ const Code = () => {
               <AiOutlineAlignLeft />
             </div>
             <div
+              onClick={handleSaveCode}
               className="group relative p-1.5 rounded-sm hover:bg-[#333333] cursor-pointer text-zinc-300"
               title="Save Code"
             >
@@ -205,7 +262,8 @@ const Code = () => {
             }}
             onChange={(value) => {
               const updated = value || "";
-              setCode(updated);
+              hasUserEdited.current = true;
+              setEditedCode(updated);
               broadcastCode(updated);
             }}
             onMount={handleEditorMount}
