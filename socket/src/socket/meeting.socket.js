@@ -1,7 +1,13 @@
 export default function registerMeetingHandlers({ io, socket }) {
   socket.on("join-meeting", ({ meetingId }) => {
     socket.join(meetingId);
-    console.log("user join meeting room");
+    if (socket.user?.meetingUrl) {
+      socket.join(socket.user.meetingUrl);
+    }
+    if (socket.user?.meetingId) {
+      socket.join(String(socket.user.meetingId));
+    }
+    console.log("user join meeting room : ", meetingId);
 
     const room = io.sockets.adapter.rooms.get(meetingId);
     const members = [];
@@ -17,16 +23,45 @@ export default function registerMeetingHandlers({ io, socket }) {
         }
       }
     }
-    socket.emit("meeting-members", members);
+
+    // 🔥 Send updated members to everyone in the room (including the admin dashboard)
+    io.to(meetingId).emit("meeting-members", members);
+    if (socket.user?.meetingUrl && socket.user.meetingUrl !== meetingId) {
+      io.to(socket.user.meetingUrl).emit("meeting-members", members);
+    }
 
     console.log("user joined meeting room : ", socket.user);
     socket.to(meetingId).emit("user-joined", {
       user: socket.user,
       socketId: socket.id,
     });
+    if (socket.user?.meetingUrl && socket.user.meetingUrl !== meetingId) {
+      socket.to(socket.user.meetingUrl).emit("user-joined", {
+        user: socket.user,
+        socketId: socket.id,
+      });
+    }
   });
   socket.on("code-snapshot", ({ meetingId, snapshot }) => {
-    io.to(meetingId).emit("receive-code-snapshot", { snapshot, from: socket.user.id });
+    io.to(meetingId).emit("receive-code-snapshot", { snapshot, from: socket.user?.id || socket.user?.username });
+  });
+
+  socket.on("send-code", ({ code, meetingId, eventId, clientTimestamp }) => {
+    io.to(meetingId).emit("receive-code", {
+      code,
+      from: socket.user?.username || socket.user?.id,
+      eventId,
+      clientTimestamp,
+    });
+  });
+
+  socket.on("send-message", ({ text, meetingId, eventId, clientTimestamp }) => {
+    io.to(meetingId).emit("receive-message", {
+      text,
+      from: socket.user?.username || socket.user?.id,
+      eventId,
+      clientTimestamp,
+    });
   });
 
   // 🔹 Request Student Code (Teacher -> Student via Server)

@@ -37,9 +37,21 @@ export interface StudentCodeTabsState {
   errors: Record<string, string | null>;
 }
 
+export interface MeetingInfo {
+  name?: string;
+  adminName?: string;
+  url?: string;
+  createdAt?: string | Date;
+  duration?: string;
+  status?: string;
+  joinPolicy?: string;
+}
+
 export interface MeetingState {
   meetingId: string | null;
   connectionStatus: "connected" | "disconnected" | "connecting";
+  adminName: string | null;
+  meetingInfo: MeetingInfo | null;
 
   participants: {
     byId: Record<string, Participant>;

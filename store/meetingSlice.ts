@@ -1,5 +1,6 @@
 import { createSlice, PayloadAction } from "@reduxjs/toolkit";
 import {
+  MeetingInfo,
   MeetingState,
   Participant,
   Snapshot,
@@ -18,6 +19,8 @@ const initialStudentCodeTabs: StudentCodeTabsState = {
 
 const initialState: MeetingState = {
   meetingId: null,
+  adminName: null,
+  meetingInfo: null,
   connectionStatus: "disconnected",
   participants: {
     byId: {},
@@ -30,16 +33,23 @@ const meetingSlice = createSlice({
   name: "meeting",
   initialState,
   reducers: {
-    // 🎯 Set meeting ID
     setMeetingId(state, action: PayloadAction<string>) {
       state.meetingId = action.payload;
     },
 
+    setAdminName(state, action: PayloadAction<string>) {
+      state.adminName = action.payload;
+    },
+
+    setMeetingInfo(state, action: PayloadAction<MeetingInfo>) {
+      state.meetingInfo = { ...state.meetingInfo, ...action.payload };
+      if (action.payload.adminName && !state.adminName) {
+        state.adminName = action.payload.adminName;
+      }
+    },
+
     // ➕ User joined
-    userJoined(
-      state,
-      action: PayloadAction<{ id: string; username: string }>
-    ) {
+    userJoined(state, action: PayloadAction<{ id: string; username: string }>) {
       const user = action.payload;
 
       if (!state.participants.byId[user.id]) {
@@ -57,14 +67,14 @@ const meetingSlice = createSlice({
 
       delete state.participants.byId[id];
       state.participants.allIds = state.participants.allIds.filter(
-        (participantId) => participantId !== id
+        (participantId) => participantId !== id,
       );
     },
 
     // 🔄 Set participants (bulk)
     setParticipants(
       state,
-      action: PayloadAction<{ id: string; username: string }[]>
+      action: PayloadAction<{ id: string; username: string }[]>,
     ) {
       state.participants.byId = {};
       state.participants.allIds = [];
@@ -84,7 +94,7 @@ const meetingSlice = createSlice({
       action: PayloadAction<{
         userId: string;
         snapshot: any;
-      }>
+      }>,
     ) {
       const { userId, snapshot } = action.payload;
 
@@ -96,7 +106,7 @@ const meetingSlice = createSlice({
     // 🔌 Connection status
     setConnectionStatus(
       state,
-      action: PayloadAction<MeetingState["connectionStatus"]>
+      action: PayloadAction<MeetingState["connectionStatus"]>,
     ) {
       state.connectionStatus = action.payload;
     },
@@ -104,7 +114,7 @@ const meetingSlice = createSlice({
     // 📝 Student Code Tabs (Teacher "See Code" feature)
     requestStudentCodeStart(
       state,
-      action: PayloadAction<{ studentId: string; studentName?: string }>
+      action: PayloadAction<{ studentId: string; studentName?: string }>,
     ) {
       const { studentId } = action.payload;
       if (!state.studentCodeTabs) {
@@ -146,9 +156,10 @@ const meetingSlice = createSlice({
         code: string;
         language?: string;
         timestamp?: number;
-      }>
+      }>,
     ) {
-      const { studentId, studentName, code, language, timestamp } = action.payload;
+      const { studentId, studentName, code, language, timestamp } =
+        action.payload;
       if (state.studentCodeTabs) {
         state.studentCodeTabs.loading[studentId] = false;
         state.studentCodeTabs.errors[studentId] = null;
@@ -169,7 +180,7 @@ const meetingSlice = createSlice({
 
     receiveStudentCodeError(
       state,
-      action: PayloadAction<{ studentId: string; error: string }>
+      action: PayloadAction<{ studentId: string; error: string }>,
     ) {
       const { studentId, error } = action.payload;
       if (state.studentCodeTabs) {
@@ -222,6 +233,8 @@ const meetingSlice = createSlice({
     // 🧹 Reset meeting (clears all participant and code tab state)
     resetMeeting(state) {
       state.meetingId = null;
+      state.adminName = null;
+      state.meetingInfo = null;
       state.participants = { byId: {}, allIds: [] };
       state.connectionStatus = "disconnected";
       state.studentCodeTabs = {
@@ -237,6 +250,8 @@ const meetingSlice = createSlice({
 
 export const {
   setMeetingId,
+  setAdminName,
+  setMeetingInfo,
   userJoined,
   userLeft,
   setConnectionStatus,

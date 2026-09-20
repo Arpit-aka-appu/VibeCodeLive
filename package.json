@@ -8,7 +8,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test:socket": "node k6-tests/socket-load-test.js",
+    "register:users": "node k6-tests/register-users.js"
   },
   "dependencies": {
     "@emotion/react": "^11.14.0",

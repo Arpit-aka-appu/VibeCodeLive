@@ -1,54 +1,17 @@
-// File: pages/api/meetings/join.js
-// Join meeting API
-// - Takes meetingUrl from body
-// - Extracts user data from cookie (JWT token)
-// - Finds meeting and user
-// - Adds user to meeting.members array (if not already added)
-
 import { connectDB } from "@/lib/db.js";
 import Meeting from "@/models/Meeting.js";
 import User from "@/models/User.model.js";
-import { stat } from "fs";
 import jwt from "jsonwebtoken";
 import { NextResponse } from "next/server";
 import { getUserFromRequest } from "@/lib/getUserFromRequest";
-import e from "express";
+import { ApiError } from "@/lib/errors";
 
 export async function POST(req, res) {
   await connectDB();
 
   try {
-    // const { meetingUrl } = await req.json();
-    // if (!meetingUrl) {
-    //   return NextResponse.json({
-    //     success: false,
-    //     message: "Meeting URL is required",
-    //     status: 400,
-    //   });
-    // }
-
     // 1. Read user token from cookies
     const decodedUser = await getUserFromRequest(req);
-    // const token = req.cookies.get("token")?.value;
-    // if (!token) {
-    //   return NextResponse.json({
-    //     success: false,
-    //     message: "No user token found",
-    //     status: 401,
-    //   });
-    // }
-
-    // 2. Verify user token
-    // let decoded;
-    // try {
-    //   decoded = jwt.verify(token, process.env.JWT_SECRET);
-    // } catch (err) {
-    //   return NextResponse.json({
-    //     success: false,
-    //     message: "Invalid token",
-    //     status: 401,
-    //   });
-    // }
 
     const userId = decodedUser.userId;
     const { meetingId, password, formData } = await req.json();
@@ -75,11 +38,10 @@ export async function POST(req, res) {
     }
     let meetingUrl;
     // meeting url for frontend
-    if(meeting.url){
-
-       meetingUrl = `/meeting/member/${meeting.url}`;
-    }else{
-       meetingUrl = `/meeting/member/${meeting._id}`;
+    if (meeting.url) {
+      meetingUrl = `/meeting/member/${meeting.url}`;
+    } else {
+      meetingUrl = `/meeting/member/${meeting._id}`;
     }
 
     // 5. If user already exists in members, return success
@@ -106,6 +68,8 @@ export async function POST(req, res) {
         meetingId: meeting._id.toString(),
         meetingUrl: meeting.url,
         username: user.name,
+        adminName: meeting.adminName,
+        meetingName: meeting.name,
         isHost,
         role: isHost ? "teacher" : "student",
       },
@@ -121,11 +85,29 @@ export async function POST(req, res) {
       meetingUrl,
     });
   } catch (error) {
-    console.error("JOIN MEETING ERROR:", error);
-    return NextResponse.json({
-      success: false,
-      message: "Server problem joining meeting , try again later.",
-      status: 500,
-    });
+    console.error("Join meeting error:", error);
+
+    // Handle your custom ApiError
+    if (error instanceof ApiError) {
+      return NextResponse.json(
+        {
+          success: false,
+          message: error.message,
+          code: error.code,
+        },
+        {
+          status: error.statusCode,
+        },
+      );
+    }
+
+    // Handle unexpected errors
+    return NextResponse.json(
+      {
+        success: false,
+        message: "Something went wrong",
+      },
+      { status: 500 },
+    );
   }
 }

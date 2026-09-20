@@ -2,12 +2,62 @@ import express from "express";
 import http from "http";
 import { Server } from "socket.io";
 import jwt from "jsonwebtoken";
+import { monitorEventLoopDelay } from "perf_hooks";
+import dotenv from "dotenv";
+
+dotenv.config();
 // import { connectDB } from "../lib/db.js";
 // import Meeting from "../models/Meeting.js";
 // import User from "../models/User.model.js";
 
 const app = express();
 const httpServer = http.createServer(app);
+
+// Lightweight Event Loop & Performance Monitoring
+const eventLoopHistogram = monitorEventLoopDelay({ resolution: 20 });
+eventLoopHistogram.enable();
+
+let lastCpuUsage = process.cpuUsage();
+let lastCpuTime = Date.now();
+
+app.get("/metrics", (req, res) => {
+  const currentCpuUsage = process.cpuUsage(lastCpuUsage);
+  const currentTime = Date.now();
+  const timeDiffMs = Math.max(1, currentTime - lastCpuTime);
+  const totalCpuMicroSec = currentCpuUsage.user + currentCpuUsage.system;
+  const cpuPercent = Math.min(100, Math.round((totalCpuMicroSec / (timeDiffMs * 1000 * 100)) * 100) / 100);
+  lastCpuUsage = process.cpuUsage();
+  lastCpuTime = currentTime;
+
+  const mem = process.memoryUsage();
+  const activeSockets = io.engine?.clientsCount || io.sockets?.sockets?.size || 0;
+  const activeRooms = io.sockets?.adapter?.rooms?.size || 0;
+
+  res.json({
+    status: "ok",
+    timestamp: Date.now(),
+    cpu: {
+      percent: cpuPercent,
+    },
+    memory: {
+      rssMb: Math.round((mem.rss / 1024 / 1024) * 100) / 100,
+      heapUsedMb: Math.round((mem.heapUsed / 1024 / 1024) * 100) / 100,
+      heapTotalMb: Math.round((mem.heapTotal / 1024 / 1024) * 100) / 100,
+    },
+    sockets: {
+      activeSockets,
+      activeRooms,
+    },
+    eventLoopLag: {
+      minMs: Math.round((eventLoopHistogram.min / 1e6) * 100) / 100,
+      maxMs: Math.round((eventLoopHistogram.max / 1e6) * 100) / 100,
+      meanMs: Math.round((eventLoopHistogram.mean / 1e6) * 100) / 100,
+      p50Ms: Math.round((eventLoopHistogram.percentile(50) / 1e6) * 100) / 100,
+      p95Ms: Math.round((eventLoopHistogram.percentile(95) / 1e6) * 100) / 100,
+      p99Ms: Math.round((eventLoopHistogram.percentile(99) / 1e6) * 100) / 100,
+    },
+  });
+});
 
 const io = new Server(httpServer, {
   cors: {
@@ -34,6 +84,7 @@ io.use((socket, next) => {
     socket.data.isHost = decoded.isHost;
     socket.data.role = decoded.role;
     socket.data.meetingId = decoded.meetingId;
+    socket.data.meetingUrl = decoded.meetingUrl;
     next();
   } catch (e) {
     console.log("❌ Token verification error:", e);
@@ -48,7 +99,37 @@ io.on("connection", (socket) => {
   socket.on("join-meeting", async ({ meetingId }, ack) => {
 
     socket.join(meetingId);
-    socket.to(meetingId).emit("user-joined", socket.data.userId);
+    if (socket.data?.meetingUrl) socket.join(socket.data.meetingUrl);
+    if (socket.data?.meetingId) socket.join(String(socket.data.meetingId));
+
+    const room = io.sockets.adapter.rooms.get(meetingId);
+    const members = [];
+    if (room) {
+      for (const socketId of room) {
+        const s = io.sockets.sockets.get(socketId);
+        const u = s?.data || s?.user;
+        if (u) {
+          members.push({
+            id: u.userId || u.id,
+            username: u.username,
+          });
+        }
+      }
+    }
+
+    // Emit meeting-members to everyone in room (including admin frontend)
+    io.to(meetingId).emit("meeting-members", members);
+    if (socket.data?.meetingUrl && socket.data.meetingUrl !== meetingId) {
+      io.to(socket.data.meetingUrl).emit("meeting-members", members);
+    }
+
+    socket.to(meetingId).emit("user-joined", {
+      user: {
+        id: socket.data.userId,
+        username: socket.data.username,
+      },
+      socketId: socket.id,
+    });
     console.log(`User ${socket.data.userId} joined meeting ${meetingId}`);
 
     if (typeof ack === "function") {
@@ -56,21 +137,25 @@ io.on("connection", (socket) => {
     }
   });
 
-  socket.on("send-message", ({ text, meetingId }) => {
+  socket.on("send-message", ({ text, meetingId, eventId, clientTimestamp }) => {
     console.log(`Message in : ${text}`);
 
     io.to(meetingId).emit("receive-message", {
       text,
       from: socket.data.username,
+      eventId,
+      clientTimestamp,
     });
   });
 
-  socket.on("send-code", ({ code, meetingId }) => {
+  socket.on("send-code", ({ code, meetingId, eventId, clientTimestamp }) => {
     console.log(`Code update in : ${code} from ${socket.data.username} and meetingId: ${meetingId}`);
 
     io.to(meetingId).emit("receive-code", {
       code,
       from: socket.data.username,
+      eventId,
+      clientTimestamp,
     });
   });
 
@@ -191,6 +276,7 @@ io.on("connection", (socket) => {
 
 });
 
-httpServer.listen(3001, () => {
-  console.log("Socket server running on port 3001");
+const PORT = process.env.PORT || 3001;
+httpServer.listen(PORT, () => {
+  console.log(`Socket server running on port ${PORT}`);
 });
