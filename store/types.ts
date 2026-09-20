@@ -59,12 +59,15 @@ export interface MeetingInfo {
   output?: any[];
 }
 
+export type ViewMode = "left" | "both" | "right";
+
 export interface MeetingState {
   meetingId: string | null;
   connectionStatus: "connected" | "disconnected" | "connecting";
   adminName: string | null;
   meetingInfo: MeetingInfo | null;
   currentUser: CurrentUser | null;
+  viewMode: ViewMode;
 
   participants: {
     byId: Record<string, Participant>;

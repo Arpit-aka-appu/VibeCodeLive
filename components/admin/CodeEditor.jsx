@@ -18,6 +18,7 @@ const Code = () => {
   const params = useParams();
   const meetingInfo = useSelector((state) => state.meeting.meetingInfo);
   const meetingIdFromState = useSelector((state) => state.meeting.meetingId);
+  const viewMode = useSelector((state) => state.meeting?.viewMode);
   const meetingId = meetingIdFromState || params?.id;
 
   const [selectedLanguage, setSelectedLanguage] = useState(
@@ -54,6 +55,18 @@ const Code = () => {
   const syncTimerRef = useRef(null);
   const dbSaveTimerRef = useRef(null);
   const editorRef = useRef(null);
+
+  // Trigger Monaco relayout whenever view mode changes (LEFT, BOTH, RIGHT)
+  useEffect(() => {
+    if (editorRef.current) {
+      editorRef.current.layout();
+    }
+    const timer = setTimeout(() => {
+      editorRef.current?.layout();
+      window.dispatchEvent(new Event("resize"));
+    }, 100);
+    return () => clearTimeout(timer);
+  }, [viewMode]);
 
   useEffect(() => {
     selectedLanguageRef.current = selectedLanguage;
@@ -250,7 +263,7 @@ const Code = () => {
 
   return (
     <Split
-      className="h-full w-full overflow-hidden"
+      className="h-full w-full overflow-hidden flex flex-col"
       sizes={[75, 25]}
       minSize={[200, 38]}
       expandToMin={false}
@@ -262,8 +275,8 @@ const Code = () => {
       cursor="row-resize"
     >
       {/* Code section */}
-      <div className="bg-[#262626] h-full rounded-b-lg border-x-[0.5px] border-b-[0.5px] border-zinc-600 flex flex-col">
-        <div className="border-b-[0.5px] border-zinc-600 w-full h-8 flex items-center justify-between px-2">
+      <div className="bg-[#262626] h-full rounded-b-lg border-x-[0.5px] border-b-[0.5px] border-zinc-600 flex flex-col min-h-0 overflow-hidden">
+        <div className="border-b-[0.5px] border-zinc-600 w-full h-8 flex items-center justify-between px-2 shrink-0">
           <span className="text-[11px] font-mono text-zinc-400">
             Instructor Workspace (Live Broadcasting)
           </span>
@@ -307,14 +320,16 @@ const Code = () => {
           </div>
         </div>
 
-        <div className="flex-1 min-h-0">
+        <div className="flex-1 min-h-0 w-full relative">
           <Editor
             height="100%"
+            width="100%"
             language={selectedLangConfig.monacoLanguage}
             theme="custom-bg"
             beforeMount={beforeMount}
             value={Code}
             options={{
+              automaticLayout: true,
               fontSize: 14,
               fontFamily: "JetBrains Mono, monospace",
               lineHeight: 22,
@@ -343,7 +358,7 @@ const Code = () => {
       </div>
 
       {/* Output section */}
-      <div className="bg-[#262626] rounded-lg border-[0.5px] border-zinc-600 flex flex-col h-full min-h-10">
+      <div className="bg-[#262626] rounded-lg border-[0.5px] border-zinc-600 flex flex-col h-full min-h-0 overflow-hidden">
         <div className="w-full h-9 shrink-0 bg-[#333333] justify-between rounded-t-lg p-1 px-2 flex items-center gap-1 overflow-x-scroll no-scrollbar text-zinc-400">
           <div className="flex gap-2 items-center text-xs font-semibold text-zinc-200">
             <BsFileCode className="text-blue-400 text-sm" />
