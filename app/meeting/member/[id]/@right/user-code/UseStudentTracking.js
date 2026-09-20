@@ -13,7 +13,8 @@ const CONFIG = {
   SAME_LINE_REPEAT_THRESHOLD: 5, // same line edited 5+ times → stuck on line
   SAME_ERROR_REPEAT_THRESHOLD: 3, // same error 3+ times → stuck on error
   HIGH_ERROR_RATE_THRESHOLD: 5, // 5+ errors per session → struggling
-  SNAPSHOT_INTERVAL_MS: 2 * 60 * 1000, // code snapshot every 2 min
+  SNAPSHOT_INTERVAL_MS: 30 * 1000, // code snapshot every 30s
+  INITIAL_SNAPSHOT_DELAY_MS: 5 * 1000, // initial baseline snapshot after 5s
   LINE_FLAT_DURATION_MS: 5 * 60 * 1000, // 5 min no line-count growth → stuck
   SIMILARITY_THRESHOLD: 0.85, // 85% match to reference → copied
 };
@@ -32,9 +33,10 @@ const CONFIG = {
  * @param {function} [options.onFlag]        - callback(flagEvent) when something is flagged
  * @param {function} [options.onSnapshot]    - callback(snapshot) for periodic saves
  *
- * @returns {{ getReport, attachMonacoListeners }}
+ * @returns {{ getReport, attachMonacoListeners, triggerSnapshot }}
  *   - getReport()              → full session stats object
  *   - attachMonacoListeners(editor) → call this in Monaco's onMount
+ *   - triggerSnapshot()        → manually fire debounced snapshot after runCode
  */
 export function useStudentTracking({
   studentId,
@@ -66,14 +68,22 @@ export function useStudentTracking({
 
   const codeRef = useRef(code);
   const outputRef = useRef(output);
+  const onSnapshotRef = useRef(onSnapshot);
+  const onFlagRef = useRef(onFlag);
 
-  // keep refs in sync with props
+  // keep refs in sync with props to prevent stale closure traps
   useEffect(() => {
     codeRef.current = code;
   }, [code]);
   useEffect(() => {
     outputRef.current = output;
   }, [output]);
+  useEffect(() => {
+    onSnapshotRef.current = onSnapshot;
+  }, [onSnapshot]);
+  useEffect(() => {
+    onFlagRef.current = onFlag;
+  }, [onFlag]);
 
   // ── Helper: safely get latest output string from the array ───────────────
   // Output is an array of all previous run results — always analyse the last one.
@@ -96,9 +106,9 @@ export function useStudentTracking({
         ...detail,
       };
       session.current.flags.push(event);
-      onFlag(event);
+      onFlagRef.current?.(event);
     },
-    [studentId, assignmentId, onFlag],
+    [studentId, assignmentId],
   );
 
   // ── Utility: similarity score (Jaccard on trigrams) ──────────────────────
@@ -227,34 +237,50 @@ export function useStudentTracking({
     return () => document.removeEventListener("visibilitychange", handler);
   }, []);
 
-  // ── Periodic snapshot every 30s ───────────────────────────────────────────
+  // ── Manual & periodic snapshot trigger ────────────────────────────────────
+  const triggerSnapshot = useCallback(() => {
+    const s = session.current;
+    const snapshot = {
+      report: {
+        studentId,
+        assignmentId,
+        timestamp: Date.now(),
+        totalOutputRuns: Array.isArray(outputRef.current)
+          ? outputRef.current.length
+          : 0,
+        keystrokes: s.keystrokes,
+        backspaces: s.backspaces,
+        runAttempts: s.runAttempts.length,
+      },
+      code: codeRef.current,
+      output: getLatestOutput(),
+    };
+    s.codeSnapshots.push(snapshot);
+    checkLineFlatness();
+    checkBackspaceRatio();
+    checkZeroKeystrokeRatio();
+    onSnapshotRef.current?.(snapshot);
+  }, [studentId, assignmentId, getLatestOutput]);
+
+  // ── Initial snapshot after 5s and periodic snapshot every 30s ──────────────
   useEffect(() => {
     const s = session.current;
+
+    // Send initial snapshot after 5 seconds warmup
+    const initialTimer = setTimeout(() => {
+      triggerSnapshot();
+    }, CONFIG.INITIAL_SNAPSHOT_DELAY_MS);
+
+    // Periodic snapshot every 30 seconds
     s.snapshotTimer = setInterval(() => {
-      const snapshot = {
-        report: {
-          studentId,
-          assignmentId,
-          timestamp: Date.now(),
-          totalOutputRuns: Array.isArray(outputRef.current)
-            ? outputRef.current.length
-            : 0,
-          keystrokes: s.keystrokes,
-          backspaces: s.backspaces,
-          runAttempts: s.runAttempts.length,
-        }, // full session report at this moment
-        code: codeRef.current,
-        output: getLatestOutput(), // latest string from the Output array
-      };
-      s.codeSnapshots.push(snapshot);
-      checkLineFlatness();
-      checkBackspaceRatio();
-      checkZeroKeystrokeRatio();
-      onSnapshot();
+      triggerSnapshot();
     }, CONFIG.SNAPSHOT_INTERVAL_MS);
 
-    return () => clearInterval(s.snapshotTimer);
-  }, []);
+    return () => {
+      clearTimeout(initialTimer);
+      if (s.snapshotTimer) clearInterval(s.snapshotTimer);
+    };
+  }, [triggerSnapshot]);
 
   // ── "Not started" timer — runs once after 5 min ───────────────────────────
   useEffect(() => {
@@ -415,5 +441,5 @@ export function useStudentTracking({
     };
   }, [studentId, assignmentId]);
 
-  return { getReport, attachMonacoListeners };
+  return { getReport, attachMonacoListeners, triggerSnapshot };
 }

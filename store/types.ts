@@ -14,10 +14,19 @@ export interface Snapshot {
   output: string;
 }
 
+export interface CurrentUser {
+  id: string;
+  username: string;
+  isHost?: boolean;
+  role?: string;
+}
+
 export interface Participant {
   id: string;
   username: string;
-  snapshot?: Snapshot;
+  role?: string;
+  isHost?: boolean;
+  snapshot?: any;
 }
 
 export const MAX_STUDENT_TABS = 5;
@@ -45,6 +54,9 @@ export interface MeetingInfo {
   duration?: string;
   status?: string;
   joinPolicy?: string;
+  code?: string;
+  language?: string;
+  output?: any[];
 }
 
 export interface MeetingState {
@@ -52,6 +64,7 @@ export interface MeetingState {
   connectionStatus: "connected" | "disconnected" | "connecting";
   adminName: string | null;
   meetingInfo: MeetingInfo | null;
+  currentUser: CurrentUser | null;
 
   participants: {
     byId: Record<string, Participant>;

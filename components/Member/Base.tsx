@@ -1,22 +1,17 @@
 "use client";
 import Split from "react-split";
-import { io, Socket } from "socket.io-client";
 import { RiCodeSSlashLine } from "react-icons/ri";
-import { BsClipboard2 } from "react-icons/bs";
-import { HiOutlineBookOpen } from "react-icons/hi2";
 import { FiUser } from "react-icons/fi";
 import { VscComment } from "react-icons/vsc";
 import { IoIosInformationCircleOutline } from "react-icons/io";
 import { TbNotes } from "react-icons/tb";
-import { GoQuestion } from "react-icons/go";
 import Nav_Link from "@/components/Member/Nav_Link";
-import { useEffect, useState } from "react";
+import AdminLiveCodeViewer from "@/components/Member/AdminLiveCodeViewer";
+import { useEffect } from "react";
 import { useRouter, useParams } from "next/navigation";
 import { connectSocket, joinMeeting } from "@/lib/socketService";
 import { setMeetingId } from "@/store/meetingSlice";
-import { useDispatch } from "react-redux";
-
-let socket: Socket | null = null;
+import { useDispatch, useSelector } from "react-redux";
 
 const Base = ({
   left,
@@ -25,36 +20,11 @@ const Base = ({
   left: React.ReactNode;
   right: React.ReactNode;
 }) => {
-    const { id } = useParams<{ id: string }>();
- 
-  // this is left side nav links array
-  const rightNavArray = [
-    {
-      title: "Code",
-      icon: <RiCodeSSlashLine className="text-green-500" />,
-      className: "",
-      href: `/meeting/member/${id}/code`,
-    },
-    {
-      title: "WhiteBoard",
-      icon: <BsClipboard2 className="text-zinc-300 " />,
-      className: "",
-      href: `/meeting/member/${id}/whiteboard`,
-    },
-    {
-      title: "Resourses",
-      icon: <HiOutlineBookOpen className="text-blue-500" />,
-      className: "",
-      href: `/meeting/member/${id}/resourses`,
-    },
-    {
-      title: "Problems",
-      icon: <GoQuestion className="text-red-500" />,
-      className: "",
-      href: `/meeting/member/${id}/problems`,
-    },
-  ];
+  const { id } = useParams<{ id: string }>();
 
+  const unreadCount = useSelector(
+    (state: { chat?: { unreadCount?: number } }) => state.chat?.unreadCount || 0
+  );
 
   const leftNavArray = [
     {
@@ -70,10 +40,11 @@ const Base = ({
       href: `/meeting/member/${id}/members`,
     },
     {
-      title: "Comments",
+      title: "Live Chat",
       icon: <VscComment className="text-blue-500" />,
       className: "",
       href: `/meeting/member/${id}/comments`,
+      badge: unreadCount,
     },
     {
       title: "Notes",
@@ -109,8 +80,8 @@ const Base = ({
   return (
     <Split
       className="flex h-full w-full overflow-hidden"
-      sizes={[75, 25]}
-      minSize={[400, 200]}
+      sizes={[55, 45]}
+      minSize={[350, 300]}
       expandToMin={false}
       gutterSize={10}
       gutterAlign="center"
@@ -119,9 +90,29 @@ const Base = ({
       direction="horizontal"
       cursor="col-resize"
     >
-      {/* left part */}
-      <div className="h-full rounded-lg  flex flex-col overflow-hidden">
-        <div className="w-full h-9 bg-[#333333] rounded-t-lg p-1 flex items-center border-x-[0.5px] border-t-[0.5px] border-zinc-600 text-zinc-400 gap-1 overflow-x-scroll no-scrollbar">
+      {/* Left Side: Instructor's Live Code & Console Output */}
+      <div className="h-full rounded-lg flex flex-col overflow-hidden">
+        <div className="w-full h-9 bg-[#333333] rounded-t-lg px-3 flex items-center justify-between border-x-[0.5px] border-t-[0.5px] border-zinc-600 text-zinc-300 select-none shrink-0">
+          <div className="flex items-center gap-2 min-w-0">
+            <RiCodeSSlashLine className="text-green-400 text-base shrink-0" />
+            <span className="text-xs font-semibold text-zinc-100 truncate">
+              Instructor Live Screen
+            </span>
+          </div>
+          <div className="flex items-center gap-1.5 text-[10px] text-emerald-400 font-medium bg-emerald-500/10 border border-emerald-500/25 px-2 py-0.5 rounded-full shrink-0">
+            <span className="relative flex h-1.5 w-1.5">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-400"></span>
+            </span>
+            <span>Live Sync</span>
+          </div>
+        </div>
+        <div className="flex-1 min-h-0">{left || <AdminLiveCodeViewer />}</div>
+      </div>
+
+      {/* Right Side: Student Workspace (User Code, Members, Comments, Notes, About) */}
+      <div className="rounded-lg flex flex-col overflow-hidden h-full">
+        <div className="w-full h-9 shrink-0 bg-[#333333] rounded-t-lg p-1 flex items-center border-x-[0.5px] border-t-[0.5px] border-zinc-600 gap-1 overflow-x-scroll no-scrollbar text-zinc-400">
           {leftNavArray.map((link, index) => (
             <Nav_Link
               key={index}
@@ -129,25 +120,10 @@ const Base = ({
               icon={link.icon}
               className={link.className}
               href={link.href}
+              badge={link.badge}
             />
           ))}
         </div>
-        <div className="flex-1 min-h-0">{left}</div>
-      </div>
-      {/* right part */}
-      <div className="rounded-lg flex flex-col overflow-hidden h-full">
-        <div className="w-full h-9 shrink-0 bg-[#333333] rounded-t-lg p-1 flex items-center border-x-[0.5px] border-t-[0.5px] border-zinc-600 gap-1 overflow-x-scroll no-scrollbar text-zinc-400">
-          {/* {rightNavArray.map((link, index) => (
-            <Nav_Link
-              key={index}
-              title={link.title}
-              icon={link.icon}
-              className={link.className}
-              href={link.href}
-            />
-          ))} */}
-        </div>
-        {/* this is in left side  */}
         <div className="flex-1 min-h-0">{right}</div>
       </div>
     </Split>

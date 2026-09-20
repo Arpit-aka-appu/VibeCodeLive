@@ -65,13 +65,6 @@ const Admin_info_section = () => {
 
   return (
     <div className="relative flex items-center h-8 gap-2.5 select-none">
-      {/* Brand Icon / Logo Indicator */}
-      <div
-        className="h-8 w-8 rounded-lg bg-gradient-to-br from-emerald-500 via-teal-600 to-zinc-800 flex items-center justify-center text-white font-black text-xs shadow-sm border border-emerald-400/30"
-        title="TeachView Live Classroom"
-      >
-        <span>TV</span>
-      </div>
 
       {/* Admin Info Pill */}
       <div

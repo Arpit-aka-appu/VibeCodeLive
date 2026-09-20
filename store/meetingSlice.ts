@@ -1,9 +1,9 @@
 import { createSlice, PayloadAction } from "@reduxjs/toolkit";
 import {
+  CurrentUser,
   MeetingInfo,
   MeetingState,
   Participant,
-  Snapshot,
   StudentCodeSnapshot,
   StudentCodeTabsState,
   MAX_STUDENT_TABS,
@@ -21,6 +21,7 @@ const initialState: MeetingState = {
   meetingId: null,
   adminName: null,
   meetingInfo: null,
+  currentUser: null,
   connectionStatus: "disconnected",
   participants: {
     byId: {},
@@ -48,8 +49,20 @@ const meetingSlice = createSlice({
       }
     },
 
+    setCurrentUser(state, action: PayloadAction<CurrentUser | null>) {
+      state.currentUser = action.payload;
+    },
+
     // ➕ User joined
-    userJoined(state, action: PayloadAction<{ id: string; username: string }>) {
+    userJoined(
+      state,
+      action: PayloadAction<{
+        id: string;
+        username: string;
+        role?: string;
+        isHost?: boolean;
+      }>
+    ) {
       const user = action.payload;
 
       if (!state.participants.byId[user.id]) {
@@ -58,6 +71,11 @@ const meetingSlice = createSlice({
           snapshot: undefined,
         };
         state.participants.allIds.push(user.id);
+      } else {
+        state.participants.byId[user.id] = {
+          ...state.participants.byId[user.id],
+          ...user,
+        };
       }
     },
 
@@ -74,7 +92,9 @@ const meetingSlice = createSlice({
     // 🔄 Set participants (bulk)
     setParticipants(
       state,
-      action: PayloadAction<{ id: string; username: string }[]>,
+      action: PayloadAction<
+        { id: string; username: string; role?: string; isHost?: boolean }[]
+      >,
     ) {
       state.participants.byId = {};
       state.participants.allIds = [];
@@ -97,9 +117,21 @@ const meetingSlice = createSlice({
       }>,
     ) {
       const { userId, snapshot } = action.payload;
+      if (!userId) return;
 
       if (state.participants.byId[userId]) {
         state.participants.byId[userId].snapshot = snapshot;
+      } else {
+        // Fallback: search by username or partial match
+        const foundId = state.participants.allIds.find(
+          (id) =>
+            id === userId ||
+            state.participants.byId[id]?.username?.toLowerCase() ===
+              userId?.toLowerCase()
+        );
+        if (foundId && state.participants.byId[foundId]) {
+          state.participants.byId[foundId].snapshot = snapshot;
+        }
       }
     },
 
@@ -252,6 +284,7 @@ export const {
   setMeetingId,
   setAdminName,
   setMeetingInfo,
+  setCurrentUser,
   userJoined,
   userLeft,
   setConnectionStatus,

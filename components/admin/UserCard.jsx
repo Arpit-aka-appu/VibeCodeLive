@@ -146,6 +146,12 @@ const UserCard = ({ userId }) => {
     }, 10000);
   };
 
+  const [detailSection, setDetailSection] = useState(false);
+
+  function handleCardClick() {
+    setDetailSection((prev) => !prev);
+  }
+
   if (!user) return null;
 
   const statusColors = {
@@ -155,14 +161,9 @@ const UserCard = ({ userId }) => {
     idle: "from-[#333333] from-20%  via-[#5C766D]/20  to-[#5C766D]/45",
   };
 
-  const [detailSection, setDetailSection] = useState(false);
-
-  function handleCardClick() {
-    setDetailSection((prev) => !prev);
-  }
-  const snapshot = user.snapshot
+  const snapshot = user.snapshot;
   console.log("Snapshot for user", user, ":", snapshot);
-  const status = snapshot?.status ||"pending";
+  const status = snapshot?.status || "pending";
   const contextArr = snapshot?.contextLines ? snapshot.contextLines.split("\n") : [];
 
   return (
@@ -263,11 +264,11 @@ const UserCard = ({ userId }) => {
 
                   {/* 🧾 Output */}
                   <div className="bg-[#2a2a2a] p-2 rounded text-[10px] mt-1">
-                    01. {snapshot.summary.whatStudentDid || "..."}<br />
-                    02. {snapshot.summary.struggling || "..."}<br />
-                    03. {snapshot.summary.doingWell || "..."}<br />
-                    04. {snapshot.summary.suspiciousBehavior || "..."}<br />
-                    05. {snapshot.summary.adviceForTeacher || "..."}<br />
+                    01. {snapshot.summary?.whatStudentDid || "..."}<br />
+                    02. {snapshot.summary?.struggling || "..."}<br />
+                    03. {snapshot.summary?.doingWell || "..."}<br />
+                    04. {snapshot.summary?.suspiciousBehavior || "..."}<br />
+                    05. {snapshot.summary?.adviceForTeacher || "..."}<br />
                   </div>
                 </div>
               ) : (
