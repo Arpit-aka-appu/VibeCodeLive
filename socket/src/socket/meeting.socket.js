@@ -311,4 +311,59 @@ export default function registerMeetingHandlers({ io, socket }) {
       timestamp: Date.now(),
     });
   });
+
+  socket.on("leave-meeting", ({ meetingId }, ack) => {
+    const userId = socket.user?.id || socket.user?.userId;
+    const username = socket.user?.username;
+
+    console.log(`User ${username} (${userId}) leaving meeting ${meetingId}`);
+
+    const targetRooms = new Set();
+    if (meetingId) targetRooms.add(meetingId);
+    if (socket.user?.meetingUrl) targetRooms.add(socket.user.meetingUrl);
+    if (socket.user?.meetingId) targetRooms.add(String(socket.user.meetingId));
+
+    for (const roomKey of targetRooms) {
+      socket.leave(roomKey);
+      socket.leave(`${roomKey}:admin`);
+    }
+
+    for (const roomKey of targetRooms) {
+      io.to(roomKey).emit("user-left", { userId, username });
+    }
+
+    for (const roomKey of targetRooms) {
+      const room = io.sockets.adapter.rooms.get(roomKey);
+      const members = [];
+      if (room) {
+        for (const socketId of room) {
+          const s = io.sockets.sockets.get(socketId);
+          if (s?.user) {
+            members.push({
+              id: s.user.id,
+              username: s.user.username,
+              role: s.user.role,
+              isHost: s.user.isHost,
+            });
+          }
+        }
+      }
+      io.to(roomKey).emit("meeting-members", members);
+    }
+
+    if (typeof ack === "function") {
+      ack({ ok: true });
+    }
+  });
+
+  socket.on("disconnecting", () => {
+    const userId = socket.user?.id || socket.user?.userId;
+    const username = socket.user?.username;
+
+    for (const roomKey of socket.rooms) {
+      if (roomKey !== socket.id) {
+        socket.to(roomKey).emit("user-left", { userId, username });
+      }
+    }
+  });
 }

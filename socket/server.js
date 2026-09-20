@@ -406,6 +406,62 @@ io.on("connection", (socket) => {
   });
 
 
+  socket.on("leave-meeting", ({ meetingId }, ack) => {
+    const userId = socket.data?.userId || socket.user?.id;
+    const username = socket.data?.username || socket.user?.username;
+
+    console.log(`User ${username} (${userId}) leaving meeting ${meetingId}`);
+
+    const targetRooms = new Set();
+    if (meetingId) targetRooms.add(meetingId);
+    if (socket.data?.meetingUrl) targetRooms.add(socket.data.meetingUrl);
+    if (socket.data?.meetingId) targetRooms.add(String(socket.data.meetingId));
+
+    for (const roomKey of targetRooms) {
+      socket.leave(roomKey);
+      socket.leave(`${roomKey}:admin`);
+    }
+
+    for (const roomKey of targetRooms) {
+      io.to(roomKey).emit("user-left", { userId, username });
+    }
+
+    for (const roomKey of targetRooms) {
+      const room = io.sockets.adapter.rooms.get(roomKey);
+      const members = [];
+      if (room) {
+        for (const socketId of room) {
+          const s = io.sockets.sockets.get(socketId);
+          const u = s?.data || s?.user;
+          if (u) {
+            members.push({
+              id: u.userId || u.id,
+              username: u.username,
+              role: u.role,
+              isHost: u.isHost,
+            });
+          }
+        }
+      }
+      io.to(roomKey).emit("meeting-members", members);
+    }
+
+    if (typeof ack === "function") {
+      ack({ ok: true });
+    }
+  });
+
+  socket.on("disconnecting", () => {
+    const userId = socket.data?.userId || socket.user?.id;
+    const username = socket.data?.username || socket.user?.username;
+
+    for (const roomKey of socket.rooms) {
+      if (roomKey !== socket.id) {
+        socket.to(roomKey).emit("user-left", { userId, username });
+      }
+    }
+  });
+
   socket.on("disconnect", () => {
     console.log("User disconnected:", socket.data.userId);
   });

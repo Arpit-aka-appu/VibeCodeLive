@@ -294,6 +294,27 @@ export function onSyncAdminState(
   };
 }
 
+export function emitLeaveMeeting(meetingId: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    if (!socket || !socket.connected) {
+      disconnectSocket();
+      resolve(true);
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      disconnectSocket();
+      resolve(true);
+    }, 1500);
+
+    socket.emit("leave-meeting", { meetingId }, () => {
+      clearTimeout(timer);
+      disconnectSocket();
+      resolve(true);
+    });
+  });
+}
+
 export function disconnectSocket() {
   socket?.disconnect();
   socket = null;
