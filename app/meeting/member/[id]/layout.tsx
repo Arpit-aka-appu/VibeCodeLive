@@ -30,7 +30,7 @@ export default async function Layout({
         <Profile_info_section/>
       </div>
       <div className="flex-1 overflow-hidden" >
-       <Base left={right} right={left} />
+       <Base left={left} right={right} />
       </div>
       <div className="fixed bottom-3 right-2 rounded-lg border-[0.5px]  border-zinc-600 flex">
         <Controles />

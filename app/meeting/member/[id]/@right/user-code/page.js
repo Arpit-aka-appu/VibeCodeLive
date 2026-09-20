@@ -8,25 +8,49 @@ import { LuTriangle } from "react-icons/lu";
 import { AiOutlineAlignLeft } from "react-icons/ai";
 import { IoBookmarkOutline } from "react-icons/io5";
 import { IoReload } from "react-icons/io5";
-import { useEffect, useRef, useCallback } from "react";
-import { useStudentTracking, getReport } from "./UseStudentTracking.js";
-import { sendCodeSnapshot, onGetStudentCode, sendStudentCodeResponse } from "@/lib/socketService";
+import { useEffect, useRef, useCallback, useMemo } from "react";
+import { useStudentTracking } from "./UseStudentTracking.js";
+import {
+  sendCodeSnapshot,
+  onGetStudentCode,
+  sendStudentCodeResponse,
+  parseTokenPayload,
+} from "@/lib/socketService";
 import { useParams } from "next/navigation.js";
+import { useSelector } from "react-redux";
 
 const Code = () => {
   const [Code, setCode] = useState("");
   const [Output, setOutput] = useState([]);
   const [CodeCompiling, setCodeCompiling] = useState(false);
-  const [messageArray, setMessageArray] = useState([{}]);
 
   const outputRef = useRef(null);
   const codeRef = useRef(Code);
+  const outputHistoryRef = useRef(Output);
   const { id } = useParams();
 
-  // Keep codeRef updated with the latest code state
+  const reduxUser = useSelector((state) => state.meeting?.currentUser);
+  const currentUser = useMemo(() => {
+    if (reduxUser) return reduxUser;
+    if (typeof window !== "undefined") {
+      const token = sessionStorage.getItem("socketAuth");
+      if (token) return parseTokenPayload(token);
+    }
+    return null;
+  }, [reduxUser]);
+
+  const isHost = currentUser?.isHost || currentUser?.role === "teacher";
+  const studentId = currentUser?.id || "student_guest";
+  const studentName = currentUser?.username || "Student";
+
+  // Keep codeRef and outputHistoryRef updated with the latest state
   useEffect(() => {
     codeRef.current = Code;
   }, [Code]);
+
+  useEffect(() => {
+    outputHistoryRef.current = Output;
+  }, [Output]);
 
   // Listen for teacher's one-time code requests over existing WebSocket
   useEffect(() => {
@@ -52,33 +76,6 @@ const Code = () => {
     });
   }, [CodeCompiling]);
 
-  async function runCode() {
-    setCodeCompiling(true);
-    const res = await fetch("/api/run", {
-      method: "POST",
-      body: JSON.stringify({
-        code: Code,
-        language_id: 63, // JavaScript
-        input: "",
-      }),
-    });
-
-    const result = await res.json();
-    setCodeCompiling(false);
-    setOutput((prev) => [
-      ...prev,
-      {
-        Data:
-          result.stdout ||
-          result.stderr ||
-          result.compile_output ||
-          "No output",
-        time: new Date().toLocaleTimeString(),
-        type: result.stderr || result.compile_output ? "error" : "success",
-      },
-    ]);
-  }
-
   const REFERENCE_CODE = `
 def add(a, b):
     return a + b
@@ -87,31 +84,15 @@ print(add(2, 3))
 `.trim();
 
   // ── Hook: initialise student tracking ────────────────────────────────────
-  const { getReport, attachMonacoListeners } = useStudentTracking({
-    studentId: "student_42", // 👈 replace with real auth session user id
-    assignmentId: "assignment_07", // 👈 replace with current assignment id
+  const { getReport, attachMonacoListeners, triggerSnapshot } = useStudentTracking({
+    studentId,
+    assignmentId: "assignment_07",
     code: Code,
     output: Output,
-    referenceCode: REFERENCE_CODE, // optional — remove if not needed
+    referenceCode: REFERENCE_CODE,
 
-    // Called every time a flag is raised
     onFlag: (flagEvent) => {
       console.log("FLAG RAISED:", flagEvent);
-
-      // Send to your backend / analytics
-      // fetch("/api/meeting/snapShot", {
-      //   method: "POST",
-      //   headers: { "Content-Type": "application/json" },
-      //   body: JSON.stringify(flagEvent),
-      // })
-      //   .then((res) => {
-      //     const data = res.json();
-      //     console.log("Flag event sent successfully:", data);
-
-      //   })
-      //   .catch(() => {});
-
-      // Optional: show a soft hint to the student for certain flags
       if (flagEvent.type === "STUCK_ON_LINE") {
         console.info("💡 Hint: student stuck on line", flagEvent.line);
       }
@@ -120,25 +101,102 @@ print(add(2, 3))
       }
     },
 
-    // Called every 2 min with a code snapshot
-    onSnapshot: () => {
-      const snapshot = getReport(); // get the full session report at this moment
-      snapshot.code = Code; // add current code to the snapshot
+    // Called on initial 5s warmup and every 30s periodically
+    onSnapshot: async () => {
+      // Teachers and hosts must never send student snapshots of their own
+      if (isHost) return;
 
-      fetch("/api/meeting/snapShot", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(snapshot),
-      })
-        .then(async (res) => {
+      const report = getReport();
+      const currentCode = codeRef.current || "";
+      const latestOut =
+        outputHistoryRef.current.length > 0
+          ? outputHistoryRef.current.at(-1)?.Data || ""
+          : "";
+
+      const snapshotBody = {
+        ...report,
+        studentId,
+        studentName,
+        code: currentCode,
+        latestOutput: latestOut,
+      };
+
+      try {
+        const res = await fetch("/api/meeting/snapShot", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(snapshotBody),
+        });
+
+        if (res.ok) {
           const data = await res.json();
-          console.log("Snapshot sent successfully:", data);
-          // Also send snapshot to other meeting participants via socket
-          sendCodeSnapshot(id, data.snapshot);
-        })
-        .catch(() => {});
+          if (data?.snapshot) {
+            console.log("Snapshot sent successfully:", data.snapshot);
+            sendCodeSnapshot(id, data.snapshot);
+            return;
+          }
+        }
+      } catch (err) {
+        console.warn("[Snapshot] API fetch failed, falling back to direct telemetry:", err);
+      }
+
+      // Resilient fallback snapshot if API endpoint fails
+      const fallbackSnapshot = {
+        studentId,
+        studentName,
+        status: currentCode.trim().length > 0 ? "coding" : "idle",
+        label: "on-track",
+        contextLines: `Keystrokes: ${report.keystrokes}\nRun attempts: ${report.runAttempts}`,
+        score: report.keystrokes > 10 ? 75 : 35,
+        summary: {
+          whatStudentDid:
+            currentCode.trim().length > 0
+              ? "Student is working on their solution."
+              : "Student joined the classroom.",
+          struggling: null,
+          doingWell: "Active session",
+          suspiciousBehavior: null,
+          adviceForTeacher: "Monitor progress.",
+        },
+        generatedAt: new Date().toISOString(),
+      };
+      sendCodeSnapshot(id, fallbackSnapshot);
     },
   });
+
+  async function runCode() {
+    setCodeCompiling(true);
+    try {
+      const res = await fetch("/api/run", {
+        method: "POST",
+        body: JSON.stringify({
+          code: Code,
+          language_id: 63, // JavaScript
+          input: "",
+        }),
+      });
+
+      const result = await res.json();
+      setCodeCompiling(false);
+      const newOutputItem = {
+        Data:
+          result.stdout ||
+          result.stderr ||
+          result.compile_output ||
+          "No output",
+        time: new Date().toLocaleTimeString(),
+        type: result.stderr || result.compile_output ? "error" : "success",
+      };
+      setOutput((prev) => [...prev, newOutputItem]);
+
+      // Trigger debounced snapshot right after code run so teacher sees results immediately
+      setTimeout(() => {
+        triggerSnapshot?.();
+      }, 1000);
+    } catch {
+      setCodeCompiling(false);
+    }
+  }
 
   // ── Monaco onMount: attach all listeners ─────────────────────────────────
   const handleEditorMount = useCallback(

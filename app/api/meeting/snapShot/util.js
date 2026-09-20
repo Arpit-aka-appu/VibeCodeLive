@@ -1,39 +1,49 @@
 // Utility functions for processing student labels and ai context
 export function buildBehaviorContext(data) {
   const {
-    flags, keystrokes, backspaces, pasteEvents,
-    runAttempts, totalErrors, sessionDurationMs,
-    code, latestOutput, codeSnapshots
-  } = data;
+    flags = [],
+    keystrokes = 0,
+    backspaces = 0,
+    pasteEvents = [],
+    runAttempts = 0,
+    totalErrors = 0,
+    sessionDurationMs = 0,
+    code = "",
+    latestOutput = "",
+    codeSnapshots = [],
+  } = data || {};
+
+  const safeFlags = Array.isArray(flags) ? flags : [];
+  const safePastes = Array.isArray(pasteEvents) ? pasteEvents : [];
+  const safeDuration = Number(sessionDurationMs) || 0;
 
   // --- Derived metrics ---
-  const sessionMinutes = Math.round(sessionDurationMs / 60000);
-  const tabSwitchCount = flags.filter(f => f.type === 'TAB_SWITCH').length;
-  const frequentSwitchEvents = flags.filter(f => f.type === 'FREQUENT_TAB_SWITCHES').length;
-  const idleEvents = flags.filter(f => f.type === 'IDLE_TOO_LONG');
-  const notStartedEvents = flags.filter(f => f.type === 'NOT_STARTED');
+  const sessionMinutes = Math.round(safeDuration / 60000);
+  const tabSwitchCount = safeFlags.filter((f) => f && f.type === "TAB_SWITCH").length;
+  const frequentSwitchEvents = safeFlags.filter((f) => f && f.type === "FREQUENT_TAB_SWITCHES").length;
+  const idleEvents = safeFlags.filter((f) => f && f.type === "IDLE_TOO_LONG");
+  const notStartedEvents = safeFlags.filter((f) => f && f.type === "NOT_STARTED");
   const lastNotStarted = notStartedEvents.at(-1);
-  const totalPastes = pasteEvents?.length ?? 0;
-  const hasCode = code && code.trim().length > 0;
-  const hasOutput = latestOutput && latestOutput.length > 0;
+  const totalPastes = safePastes.length;
+  const hasCode = typeof code === "string" && code.trim().length > 0;
+  const hasOutput = Boolean(latestOutput && String(latestOutput).length > 0);
 
   // --- Determine activity status ---
-  let status = 'unknown';
-  if (!hasCode && notStartedEvents.length > 0) status = 'not_started';
-  else if (idleEvents.length > 0 && !hasCode) status = 'idle';
-  else if (totalErrors > 0) status = 'debugging';
-  else if (hasCode && runAttempts > 0) status = 'coding';
-  else if (hasCode) status = 'coding';
-  else status = 'idle';
+  let status = "unknown";
+  if (!hasCode && notStartedEvents.length > 0) status = "not_started";
+  else if (idleEvents.length > 0 && !hasCode) status = "idle";
+  else if (totalErrors > 0) status = "debugging";
+  else if (hasCode && runAttempts > 0) status = "coding";
+  else if (hasCode) status = "coding";
+  else status = "idle";
 
   // --- Determine label (priority order) ---
-  let label = 'on-track';
-  if (!hasCode && sessionMinutes > 10) label = 'not-started';
-  if (idleEvents.length >= 2) label = 'idle-too-long';
-  if (frequentSwitchEvents >= 2) label = 'tab-switching';
-  if (totalPastes > 2) label = 'copy-pasting';
-  if (totalErrors > 5) label = 'struggling';
-  // Labels can stack — you may want an array instead (see improvements)
+  let label = "on-track";
+  if (!hasCode && sessionMinutes > 10) label = "not-started";
+  if (idleEvents.length >= 2) label = "idle-too-long";
+  if (frequentSwitchEvents >= 2) label = "tab-switching";
+  if (totalPastes > 2) label = "copy-pasting";
+  if (totalErrors > 5) label = "struggling";
 
   // --- Build context string for AI ---
   const contextLines = [
@@ -47,10 +57,10 @@ export function buildBehaviorContext(data) {
       ? `Student had NOT started coding even at ${lastNotStarted.minutesElapsed} minutes`
       : null,
     hasCode
-      ? `Code written (${code.trim().split('\n').length} lines)`
+      ? `Code written (${code.trim().split("\n").length} lines)`
       : `No code written yet`,
     hasOutput ? `Latest output: ${latestOutput}` : `No output yet`,
-  ].filter(Boolean).join('\n');
+  ].filter(Boolean).join("\n");
 
   return { status, label, contextLines, sessionMinutes, tabSwitchCount, hasCode };
 }

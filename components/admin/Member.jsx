@@ -13,18 +13,34 @@ const Members = () => {
   const participantsById = useSelector(
     (state) => state.meeting.participants.byId || {}
   );
+  const adminName = useSelector(
+    (state) => state.meeting.adminName || state.meeting.meetingInfo?.adminName
+  );
+  const currentUserId = useSelector((state) => state.meeting.currentUser?.id);
 
   const [searchQuery, setSearchQuery] = useState("");
 
   const filteredParticipantIds = useMemo(() => {
-    if (!searchQuery.trim()) return participantIds;
+    // Exclude host / teacher from the student monitoring cards
+    const studentIds = participantIds.filter((id) => {
+      const user = participantsById[id];
+      if (!user) return false;
+      if (user.isHost || user.role === "teacher") return false;
+      if (currentUserId && id === currentUserId) return false;
+      if (adminName && user.username && user.username.toLowerCase() === adminName.toLowerCase()) {
+        return false;
+      }
+      return true;
+    });
+
+    if (!searchQuery.trim()) return studentIds;
     const q = searchQuery.toLowerCase().trim();
-    return participantIds.filter((id) => {
+    return studentIds.filter((id) => {
       const user = participantsById[id];
       const name = user?.username || "";
       return name.toLowerCase().includes(q) || id.toLowerCase().includes(q);
     });
-  }, [participantIds, participantsById, searchQuery]);
+  }, [participantIds, participantsById, searchQuery, adminName, currentUserId]);
 
   return (
     <div className="h-full w-full flex flex-col p-2 bg-[#262626] rounded-b-lg border-x-[0.5px] border-b-[0.5px] border-zinc-600 overflow-hidden">
@@ -40,7 +56,7 @@ const Members = () => {
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder={`Search ${participantIds.length} members...`}
+            placeholder={`Search ${filteredParticipantIds.length} students...`}
             className="flex-1 bg-transparent outline-none text-xs text-white placeholder-zinc-400"
           />
           {searchQuery && (
@@ -65,8 +81,8 @@ const Members = () => {
               <HiOutlineUserGroup className="text-2xl text-zinc-500" />
               <span>
                 {searchQuery
-                  ? "No matching classroom members found"
-                  : "Waiting for classroom members to join..."}
+                  ? "No matching students found"
+                  : "Waiting for students to join..."}
               </span>
             </div>
           )}

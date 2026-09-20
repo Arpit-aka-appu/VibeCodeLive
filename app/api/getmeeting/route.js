@@ -30,7 +30,33 @@ export async function POST(req, res) {
       ? await User.find({ _id: { $in: meeting.members } }).select("name email _id")
       : [];
 
-    return new NextResponse(JSON.stringify({ success: true, meeting, members }), { status: 200 });
+    const defaultCode = `// Instructor Live Workspace
+// Real-time synchronization active
+
+function main() {
+  console.log("Welcome to ${meeting.name || 'TeachView Live'}!");
+}
+
+main();
+`;
+
+    const code = meeting.data?.code || defaultCode;
+    const output = meeting.data?.output || [
+      {
+        Data: `Welcome to ${meeting.name || "TeachView Live"}!`,
+        time: new Date().toLocaleTimeString(),
+        type: "success",
+      },
+    ];
+
+    const meetingObj = meeting.toObject ? meeting.toObject() : meeting;
+    meetingObj.code = code;
+    meetingObj.output = output;
+
+    return new NextResponse(
+      JSON.stringify({ success: true, meeting: meetingObj, members, code, output }),
+      { status: 200 }
+    );
   } catch (error) {
     return new NextResponse(JSON.stringify({ error: error.message }), { status: 500 });
   }

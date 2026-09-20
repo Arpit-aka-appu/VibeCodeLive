@@ -6,6 +6,7 @@ import {
   setConnectionStatus,
   setParticipants,
   updateSnapshot,
+  setCurrentUser,
   receiveStudentCodeSuccess,
   receiveStudentCodeError,
   setAdminName,
@@ -45,6 +46,14 @@ export function connectSocket(token: string) {
           url: payload.meetingUrl || undefined,
         })
       );
+      store.dispatch(
+        setCurrentUser({
+          id: payload.id,
+          username: payload.username,
+          isHost: payload.isHost,
+          role: payload.role,
+        })
+      );
     }
   }
 
@@ -76,9 +85,12 @@ export function connectSocket(token: string) {
     store.dispatch(userLeft(data.userId));
   });
 
-  socket.on("receive-code-snapshot", ({ snapshot, from }) => {
-    console.log("Received code snapshot from user", from, ":", snapshot);
-    store.dispatch(updateSnapshot({ userId: from, snapshot }));
+  socket.on("receive-code-snapshot", ({ snapshot, from, studentId, username }) => {
+    const targetUserId = studentId || from;
+    console.log("Received code snapshot from user", targetUserId, "(", username, "):", snapshot);
+    if (targetUserId) {
+      store.dispatch(updateSnapshot({ userId: targetUserId, snapshot }));
+    }
   });
 
   socket.on("receive-student-code", ({ requestId, studentId, studentName, code, language, timestamp }) => {
@@ -144,7 +156,55 @@ export function getSocketInstance(): Socket | null {
   return socket;
 }
 
+export function sendAdminCode(meetingId: string, code: string) {
+  const eventId = `code_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+  socket?.emit("send-code", {
+    code,
+    meetingId,
+    eventId,
+    clientTimestamp: Date.now(),
+  });
+}
+
+export function sendAdminOutput(meetingId: string, output: any[]) {
+  const eventId = `out_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+  socket?.emit("send-admin-output", {
+    output,
+    meetingId,
+    eventId,
+    clientTimestamp: Date.now(),
+  });
+}
+
+export function requestAdminState(meetingId: string) {
+  socket?.emit("get-admin-state", { meetingId });
+}
+
+export function onReceiveAdminCode(callback: (data: { code: string; from: string }) => void) {
+  socket?.on("receive-code", callback);
+  return () => {
+    socket?.off("receive-code", callback);
+  };
+}
+
+export function onReceiveAdminOutput(callback: (data: { output: any[]; from: string }) => void) {
+  socket?.on("receive-admin-output", callback);
+  return () => {
+    socket?.off("receive-admin-output", callback);
+  };
+}
+
+export function onSyncAdminState(
+  callback: (data: { code?: string; output?: any[]; adminName?: string }) => void
+) {
+  socket?.on("sync-admin-state", callback);
+  return () => {
+    socket?.off("sync-admin-state", callback);
+  };
+}
+
 export function disconnectSocket() {
   socket?.disconnect();
   socket = null;
 }
+

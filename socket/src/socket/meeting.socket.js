@@ -1,3 +1,8 @@
+// In-memory room state for live admin code and execution output
+const roomAdminState = new Map();
+// In-memory room state for latest student snapshots
+const roomStudentSnapshots = new Map();
+
 export default function registerMeetingHandlers({ io, socket }) {
   socket.on("join-meeting", ({ meetingId }) => {
     socket.join(meetingId);
@@ -9,6 +14,27 @@ export default function registerMeetingHandlers({ io, socket }) {
     }
     console.log("user join meeting room : ", meetingId);
 
+    const isHost = socket.user?.isHost;
+    const role = socket.user?.role;
+
+    if (isHost || role === "teacher") {
+      socket.join(`${meetingId}:admin`);
+      if (socket.user?.meetingUrl) socket.join(`${socket.user.meetingUrl}:admin`);
+      if (socket.user?.meetingId) socket.join(`${String(socket.user.meetingId)}:admin`);
+
+      // Sync cached student snapshots to joining/reconnecting admin
+      const cachedMap =
+        roomStudentSnapshots.get(meetingId) ||
+        (socket.user?.meetingUrl ? roomStudentSnapshots.get(socket.user.meetingUrl) : null) ||
+        (socket.user?.meetingId ? roomStudentSnapshots.get(String(socket.user.meetingId)) : null);
+
+      if (cachedMap) {
+        for (const snapData of cachedMap.values()) {
+          socket.emit("receive-code-snapshot", snapData);
+        }
+      }
+    }
+
     const room = io.sockets.adapter.rooms.get(meetingId);
     const members = [];
 
@@ -19,6 +45,8 @@ export default function registerMeetingHandlers({ io, socket }) {
           members.push({
             id: s.user.id,
             username: s.user.username,
+            role: s.user.role,
+            isHost: s.user.isHost,
           });
         }
       }
@@ -28,6 +56,12 @@ export default function registerMeetingHandlers({ io, socket }) {
     io.to(meetingId).emit("meeting-members", members);
     if (socket.user?.meetingUrl && socket.user.meetingUrl !== meetingId) {
       io.to(socket.user.meetingUrl).emit("meeting-members", members);
+    }
+
+    // ⚡ Send cached admin code and output to joining user immediately
+    const cachedState = roomAdminState.get(meetingId) || (socket.user?.meetingUrl ? roomAdminState.get(socket.user.meetingUrl) : null);
+    if (cachedState) {
+      socket.emit("sync-admin-state", cachedState);
     }
 
     console.log("user joined meeting room : ", socket.user);
@@ -42,17 +76,91 @@ export default function registerMeetingHandlers({ io, socket }) {
       });
     }
   });
+
   socket.on("code-snapshot", ({ meetingId, snapshot }) => {
-    io.to(meetingId).emit("receive-code-snapshot", { snapshot, from: socket.user?.id || socket.user?.username });
+    const isHost = socket.user?.isHost;
+    const role = socket.user?.role;
+    if (isHost || role === "teacher") {
+      console.warn(`[Snapshot] Blocked host/teacher ${socket.user?.id || socket.user?.username} from sending student snapshot.`);
+      return;
+    }
+
+    if (!snapshot) return;
+
+    const studentUserId = socket.user?.id || socket.user?.userId;
+    const studentUsername = socket.user?.username;
+
+    const snapshotPayload = {
+      snapshot,
+      from: studentUserId,
+      studentId: studentUserId,
+      username: studentUsername,
+    };
+
+    if (meetingId) {
+      if (!roomStudentSnapshots.has(meetingId)) {
+        roomStudentSnapshots.set(meetingId, new Map());
+      }
+      roomStudentSnapshots.get(meetingId).set(studentUserId, snapshotPayload);
+    }
+    if (socket.user?.meetingUrl && socket.user.meetingUrl !== meetingId) {
+      if (!roomStudentSnapshots.has(socket.user.meetingUrl)) {
+        roomStudentSnapshots.set(socket.user.meetingUrl, new Map());
+      }
+      roomStudentSnapshots.get(socket.user.meetingUrl).set(studentUserId, snapshotPayload);
+    }
+
+    io.to(`${meetingId}:admin`).emit("receive-code-snapshot", snapshotPayload);
+    if (socket.user?.meetingUrl && socket.user.meetingUrl !== meetingId) {
+      io.to(`${socket.user.meetingUrl}:admin`).emit("receive-code-snapshot", snapshotPayload);
+    }
+    if (socket.user?.meetingId && String(socket.user.meetingId) !== meetingId) {
+      io.to(`${String(socket.user.meetingId)}:admin`).emit("receive-code-snapshot", snapshotPayload);
+    }
   });
 
   socket.on("send-code", ({ code, meetingId, eventId, clientTimestamp }) => {
+    if (meetingId) {
+      const prev = roomAdminState.get(meetingId) || {};
+      roomAdminState.set(meetingId, {
+        ...prev,
+        code,
+        adminName: socket.user?.username || socket.user?.id,
+        timestamp: Date.now(),
+      });
+    }
+
     io.to(meetingId).emit("receive-code", {
       code,
       from: socket.user?.username || socket.user?.id,
       eventId,
       clientTimestamp,
     });
+  });
+
+  socket.on("send-admin-output", ({ output, meetingId, eventId, clientTimestamp }) => {
+    if (meetingId) {
+      const prev = roomAdminState.get(meetingId) || {};
+      roomAdminState.set(meetingId, {
+        ...prev,
+        output,
+        timestamp: Date.now(),
+      });
+    }
+
+    io.to(meetingId).emit("receive-admin-output", {
+      output,
+      from: socket.user?.username || socket.user?.id,
+      eventId,
+      clientTimestamp,
+    });
+  });
+
+  socket.on("get-admin-state", ({ meetingId }) => {
+    const cached = roomAdminState.get(meetingId);
+    if (cached) {
+      socket.emit("sync-admin-state", cached);
+    }
   });
 
   socket.on("send-message", ({ text, meetingId, eventId, clientTimestamp }) => {
