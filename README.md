@@ -1,4 +1,4 @@
-## What is thi project
+## What is this project
 A platfrom that work as a interface between student and teacher and monitor student behavior in real time using AI.
 
 ## Features
