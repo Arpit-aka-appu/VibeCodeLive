@@ -82,6 +82,7 @@ export async function POST(req) {
     // Verification URL
 
     const verifyUrl = `http://${process.env.APP_URL}/login/register/VerifyEmail?token=${rawToken}`;
+    console.log("🔗 VERIFY URL:", verifyUrl);
 
     // send email
     const response = await sendEmail({
