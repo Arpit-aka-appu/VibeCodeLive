@@ -22,7 +22,54 @@
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-rubik), var(--font-geist-sans), system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  overflow-x: hidden;
+}
+
+/* Graph Paper Grid from User Image */
+.graph-grid-bg {
+  background-color: #f6f3eb;
+  background-image: 
+    linear-gradient(to right, rgba(0, 0, 0, 0.055) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(0, 0, 0, 0.055) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
+
+/* Dotted Grid Pattern from User Image */
+.dot-grid-pattern {
+  background-image: radial-gradient(rgba(0, 0, 0, 0.16) 1.2px, transparent 1.2px);
+  background-size: 24px 24px;
+}
+
+/* Neo-retro sticker hard drop-shadows */
+.sticker-shadow-sm {
+  box-shadow: 2.5px 2.5px 0px #000000;
+}
+
+.sticker-shadow {
+  box-shadow: 3.5px 3.5px 0px #000000;
+}
+
+.sticker-shadow-lg {
+  box-shadow: 5px 5px 0px #000000;
+}
+
+/* Spinning stamp and tape reels */
+@keyframes spin-slow {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-spin-slow {
+  animation: spin-slow 20s linear infinite;
+}
+
+.animate-spin-reel {
+  animation: spin-slow 4s linear infinite;
 }
 
 

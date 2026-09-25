@@ -19,6 +19,7 @@ Welcome to the comprehensive developer documentation for **VibeCodeLive** (also 
 | [Utilities & Helpers](file:///c:/Users/AmanNagar/teachview-live/docs/utilities.md) | Zod validation schemas, email dispatchers, session summarizers, and custom Monaco themes. |
 | [Testing Structure](file:///c:/Users/AmanNagar/teachview-live/docs/testing.md) | Performance load testing with k6, test credential pools, and recommended automated testing suite. |
 | [Deployment & Operations](file:///c:/Users/AmanNagar/teachview-live/docs/deployment.md) | Environment variables matrix, multi-process deployment strategy (Next.js + Socket.IO daemon), and technical debt catalog. |
+| [Resume Engineering Fact Sheet](file:///c:/Users/AmanNagar/teachview-live/docs/resume-fact-sheet.md) | Comprehensive 17-dimension verified technical fact sheet for software engineering resume preparation. |
 
 ---
 
