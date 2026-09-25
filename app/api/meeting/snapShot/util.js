@@ -1,4 +1,6 @@
+// app/api/snapshot/util.js
 // Utility functions for processing student labels and ai context
+
 export function buildBehaviorContext(data) {
   const {
     flags = [],
@@ -23,6 +25,7 @@ export function buildBehaviorContext(data) {
   const frequentSwitchEvents = safeFlags.filter((f) => f && f.type === "FREQUENT_TAB_SWITCHES").length;
   const idleEvents = safeFlags.filter((f) => f && f.type === "IDLE_TOO_LONG");
   const notStartedEvents = safeFlags.filter((f) => f && f.type === "NOT_STARTED");
+
   const lastNotStarted = notStartedEvents.at(-1);
   const totalPastes = safePastes.length;
   const hasCode = typeof code === "string" && code.trim().length > 0;
@@ -45,7 +48,6 @@ export function buildBehaviorContext(data) {
   if (totalPastes > 2) label = "copy-pasting";
   if (totalErrors > 5) label = "struggling";
 
-  // --- Build context string for AI ---
   const contextLines = [
     `Session duration: ${sessionMinutes} minutes`,
     `Keystrokes: ${keystrokes}, Backspaces: ${backspaces} `,
@@ -65,8 +67,8 @@ export function buildBehaviorContext(data) {
   return { status, label, contextLines, sessionMinutes, tabSwitchCount, hasCode };
 }
 
-// api call to ai to analyze student behavior and get a score + summary
-export async function analyzeWithClaude(studentName, assignmentId, contextLines, code, output) {
+// api call to ai (Gemini) to analyze student behavior and get a score + summary
+export async function analyzeWithGemini(studentName, assignmentId, contextLines, code, output) {
   const prompt = `
 You are an assistant helping a teacher monitor student coding progress in real time.
 
@@ -99,24 +101,30 @@ Scoring guide:
 - 81–100: Strong effort, clean code, good output
 `;
 
-  const response = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": process.env.ANTHROPIC_API_KEY,
-      "anthropic-version": "2023-06-01"
-    },
-    body: JSON.stringify({
-      model: "claude-sonnet-4-20250514",
-      max_tokens: 600,
-      messages: [{ role: "user", content: prompt }]
-    })
-  });
+  const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+  if (!GEMINI_API_KEY) {
+    throw new Error("GEMINI_API_KEY is missing — check your .env.local file");
+  }
+
+  const response = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+      }),
+    }
+  );
+
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(`Gemini API error (${response.status}): ${errText}`);
+  }
 
   const data = await response.json();
-  const raw = data.content?.[0]?.text ?? '';
+  const raw = data.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
 
-  // Safe parse — strip any accidental markdown fences
   const clean = raw.replace(/```json|```/g, '').trim();
   return JSON.parse(clean);
 }
